@@ -1,0 +1,3 @@
+[submodule "magphase"]
+	path = magphase
+	url = https://github.com/CSTR-Edinburgh/magphase.git
