@@ -1,5 +1,8 @@
 #!/usr/bin/python3
 import argparse
+from glob import glob
+import os
+
 parser = argparse.ArgumentParser('Process and store data')
 parser.add_argument("--wav_dir", default='../blzd/wav', type=str, help='default to "blzd" under parent directory')
 parser.add_argument('--txt_dir', default='../blzd/txt', type=str)

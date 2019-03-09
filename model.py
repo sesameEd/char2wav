@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import torch
 import numpy as np
 import torch.nn as nn
@@ -258,7 +259,7 @@ class Char2Wav(nn.modules.Module):
             input_size = kwargs.get('gen_in_size', 256),
             mlp_sizes = kwargs.get('mlp_sizes', [1024, 1024, 256]),
             audio_embd = kwargs.get('audio_embd', 0),
-            bit_depth = kwargs.get('bit_depth', 8)}
+            bit_depth = kwargs.get('bit_depth', 8)
             )
 
     def forward(self, char_seq):

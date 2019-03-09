@@ -1,2 +1,2 @@
 #!/bin/bash
-export PYTHONPATH=$PYTHONPATH:.
+export PYTHONPATH=$PYTHONPATH:./magphase/src:.
