@@ -1,12 +1,11 @@
 #!/usr/bin/env python2
 import magphase as mp
 import libutils as lu
-# from model import SampleRNN
 import argparse
 from glob import glob
 from os import path
 import os
-import subprocess
+# import subprocess
 import numpy as np
 import h5py
 
@@ -30,12 +29,11 @@ dim_real = args['dim_real']
 dim_imag = dim_real
 dim_f0 = 1
 
-feats = [   'mag',       'real',  'imag',  'lf0']
+# feats = [   'mag',       'real',  'imag',  'lf0']
 dim_feats = [dim_mag, dim_real, dim_imag, dim_f0]
 
 if not glob(outdir):
     os.mkdir(outdir)
-    # subprocess.check_output('mkdir {}'.format(outdir), shell=True)
 
 def read_binfile(filename, dim=60):
     fid = open(filename, 'rb')
@@ -70,9 +68,7 @@ if __name__ == '__main__':
     wav_names = [path.basename(wav).split('.')[0] for wav in wavs]
 
     if b_multiproc:
-        # quit(0)
         lu.run_multithreaded(wav2voc, indir, outdir, wav_names)
     else:
-        print('True')
         for wn in wav_names:
             wav2voc(indir, outdir, wn)
