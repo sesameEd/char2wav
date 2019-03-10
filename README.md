@@ -1,5 +1,5 @@
 # char2wav
-To compile tools run 
+To download and compile tools run 
 ```shell
 ./compile_tools.sh
 ```
