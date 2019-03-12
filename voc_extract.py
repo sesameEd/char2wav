@@ -30,7 +30,8 @@ dim_imag = dim_real
 dim_f0 = 1
 
 # feats = [   'mag',       'real',  'imag',  'lf0']
-dim_feats = [dim_mag, dim_real, dim_imag, dim_f0]
+size_feats = [dim_mag, dim_real, dim_imag, dim_f0]
+global size_feats
 
 if not glob(outdir):
     os.mkdir(outdir)
@@ -46,7 +47,7 @@ def read_binfile(filename, dim=60):
 
 def wav2voc(wavdir, outdir, wav_name, **kwargs):
     features = kwargs.get('features', ['mag', 'real', 'imag', 'lf0'])
-    dim_feats = kwargs.get('dim_features', [60, 10, 10, 1])
+    dim_feats = kwargs.get('dim_features', size_feats)
     mag_dim, phase_dim = dim_feats[:2]
     mp.analysis_for_acoustic_modelling(path.join(wavdir, wav_name+'.wav'),
                                        outdir,

@@ -7,3 +7,9 @@ __pycache__/
 *$py.class
 
 vocoder/
+wavs_syn/
+.ipynb_checkpoints/
+data/
+misc/test_getopt.sh
+*.wav
+*.ipynb
