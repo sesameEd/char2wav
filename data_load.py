@@ -11,7 +11,6 @@ parser.add_argument('-s', '--suffix', default='txt', type=str, help='suffix of s
 parser.add_argument('--frac', act='store_true', help='processes all file under current directory')
 args = parser.parse_args()
 
-
 wavdir = args['wav_dir']
 scriptdir = args['txt_dir']
 sfx = args['suffix']

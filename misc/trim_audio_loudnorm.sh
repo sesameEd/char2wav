@@ -19,16 +19,16 @@ if [[ ${PIPESTATUS[0]} -ne 4 ]]; then
     echo 'I’m sorry, `getopt --test` failed in this environment.'
     exit 1; fi
 
-OPTIONS=i:o:m:r
-LONGOPTS=outdir:,outdir:,mode:,sample_rate:
+OPTIONS=o:m:r
+LONGOPTS=outdir:,mode:,sample_rate:
 ! PARSED=$(getopt --options=$OPTIONS --longoptions=$LONGOPTS --name "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     exit 2; fi
 eval set -- "$PARSED"
 
-wavdir="../blzd/raw"
-outdir="../blzd/wav"
+# wavdir="../blzd/raw"
+# outdir="../blzd/wav"
 TRIM=false
 NORMALIZE=false
 SAMPLE_RATE=48000
@@ -50,10 +50,10 @@ while true; do
         esac
       shift 2
       ;;
-    -i|--indir)
-      wavdir=$2
-      shift 2
-      ;;
+    # -i|--indir)
+    #   wavdir=$2
+    #   shift 2
+    #   ;;
     -o|--outdir)
       outdir=$2
       shift 2
@@ -73,13 +73,20 @@ while true; do
   esac
 done
 
-echo $PARSED
+if [[ $# -ne 1 ]]; then
+    echo "$0: A single input directory is required."
+    exit 4; fi
+wavdir=$1
+if [ ! -v outdir ]; then
+  outdir=${wavdir}/../normalized
+  echo using default output directory: $outdir; fi
+
+# echo $PARSED
 echo wav directory is: $wavdir
 echo output files to: $outdir
 echo doing: trimming? $TRIM. normalization? $NORMALIZE
 echo using sample rate $SAMPLE_RATE
 
-exit 0
 if [ ! -d "$outdir" ]; then
   mkdir $outdir
 fi
@@ -93,7 +100,8 @@ fi
 
 if [ "$NORMALIZE" = true ]; then
   if [ "$TRIM" = true ]; then
-    ffmpeg-normalize $outdir -ar $SAMPLE_RATE -f -of $outdir -ext wav
+    echo overwriting trimmed audio with normalized ones
+    ffmpeg-normalize $outdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav
   else
-    ffmpeg-normalize $wavdir -ar $SAMPLE_RATE -f -of $outdir -ext wav; fi
+    ffmpeg-normalize $wavdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav; fi
 fi
