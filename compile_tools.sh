@@ -15,4 +15,8 @@ echo run \"sudo apt-get install yasm\"
 make
 make install
 
+echo ==========================compiling ffmpeg-normalize============================
+cd ffmpeg-normalize
+pip install --user .
+
 source setup.sh

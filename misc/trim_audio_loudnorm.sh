@@ -30,7 +30,7 @@ eval set -- "$PARSED"
 # wavdir="../blzd/raw"
 # outdir="../blzd/wav"
 TRIM=false
-NORMALIZE=false
+NORMALIZE=true
 SAMPLE_RATE=48000
 
 while true; do

@@ -13,17 +13,23 @@ parser = argparse.ArgumentParser(
     "read wav files under in_dir and output magphase vocoder features to out_dir"
     )
 parser.add_argument('-frac', nargs='?', const=1000, default=None)
+parser.add_argument('-m', '--mode', dest='mode', nargs='?', default='extract',
+                    help='one of the two: \"extract\" (for extracting vocoder features) \
+                          or \"synth\" (for synthesizing from vocoder features)')
 parser.add_argument('--indir', default='../blzd/wav', type=str,
                     help='default to "blzd" under parent directory')
 parser.add_argument('--outdir', default='./vocoder', type=str)
 parser.add_argument('--n_mag', '-M', default=60, type=int, dest='dim_mag')
 parser.add_argument('--n_real', '-R', default=10, type=int, dest='dim_real')
+parser.add_argument('-r', '--sample_rate', default=48000, dest='sample_rate')
 parser.add_argument('--no_batch', action='store_false',
                     help='if activated, will not batch process files')
 args = vars(parser.parse_args())
 print(args)
 indir = args['indir']
 outdir = args['outdir']
+mode = args['mode']
+sample_rate = args['sample_rate']
 dim_mag = args['dim_mag']
 dim_real = args['dim_real']
 dim_imag = dim_real
@@ -63,13 +69,28 @@ def wav2voc(wavdir, outdir, wav_name, **kwargs):
 
 if __name__ == '__main__':
     b_multiproc = args['no_batch'] # False if the flag is activated, otherwise True
-    wavs = glob(indir + '/*')
+    # wavs = glob(indir + '/*')
+    files = glob(indir + '/*')
     if args['frac']:
-        wavs = wavs[:700]
-    wav_names = [path.basename(wav).split('.')[0] for wav in wavs]
+        files = files[:700]
+    file_tkn = [path.basename(file).split('.')[0] for file in files]
 
-    if b_multiproc:
-        lu.run_multithreaded(wav2voc, indir, outdir, wav_names)
-    else:
-        for wn in wav_names:
-            wav2voc(indir, outdir, wn)
+    if mode == "extract":
+        if b_multiproc:
+            lu.run_multithreaded(wav2voc, indir, outdir, file_tkn)
+        else:
+            for wn in file_tkn:
+                wav2voc(indir, outdir, wn)
+
+    if mode == "synth":
+        file_tkn = [path.basename(file).split('.')[0] for file in files]
+        lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
+                             './vocoder',
+                             file_tkn,
+                             './wavs_syn',
+                             dim_mag,
+                             dim_real,
+                             sample_rate,
+                             None,
+                             'no',
+                             True)

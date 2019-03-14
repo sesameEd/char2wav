@@ -4,3 +4,6 @@
 [submodule "ffmpeg"]
 	path = ffmpeg
 	url = https://git.ffmpeg.org/ffmpeg.git
+[submodule "ffmpeg-normalize"]
+	path = ffmpeg-normalize
+	url = https://github.com/slhck/ffmpeg-normalize.git
