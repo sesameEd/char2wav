@@ -83,15 +83,12 @@ if [ "$GETVOCAB" = true ]; then
   if [ ! -e ${outdir}/title_count.txt ]; then
     ls ${labdir}/ | sed 's/_[0-9]+_[0-9]+.txt//' | uniq -c > ${outdir}/title_count.txt
     sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title_count.txt; fi
-  # for name in `ls ${labdir}/*_000_000.txt`; do
   for book in `ls ${labdir} | sed 's/_[0-9]+_[0-9]+.txt//' | uniq`
-    # book=`basename ${name} _000_000.txt`
     echo $book
     echo -n "" > ${outdir}/all_${book}.txt
     for f in `ls ${labdir}/${book}_*.txt | sort`; do
       echo `cat $f` >> ${outdir}/all_${book}.txt
       echo `cat $f` >> ${outdir}/all.txt
-      #
       # echo `cat $f` | tr '[:upper:]' '[:lower:]' >> ${outdir}/all_${book}.txt
       # echo `cat $f` | tr '[:upper:]' '[:lower:]' >> ${outdir}/all.txt
     done

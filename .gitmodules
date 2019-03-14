@@ -1,3 +1,6 @@
 [submodule "magphase"]
 	path = magphase
 	url = https://github.com/CSTR-Edinburgh/magphase.git
+[submodule "ffmpeg"]
+	path = ffmpeg
+	url = https://git.ffmpeg.org/ffmpeg.git

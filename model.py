@@ -35,7 +35,7 @@ class Attn(nn.modules.Module):
         return F.normalize(phi, p=1, dim=1)
 
     def kappa_init(self, batch):
-        self.kappa = zeros(batch, self.N_gm)
+        self.kappa = torch.zeros(batch, self.N_gm)
         # return torch.zeros(batch, self.N_gm)
 
 
@@ -73,7 +73,7 @@ class Char2Vocoder(nn.modules.Module):
         """
         shape_ast(x, (-1, self.Len, self.in_size))
         _B, _T, _C = x.shape
-        input = torch.zeros(x.shape)
+        # input = torch.zeros(x.shape)
         encoded = self.encoder(x) # of shape (_B, _T, 2 * encoded_size)
 
         hid, cell = self.decoder(encoded[:, -1, :])
