@@ -100,19 +100,19 @@ class FrameLevel(nn.modules.Module):
         super(FrameLevel, self).__init__()
         self.R = kwargs['ratio']
         self.N_sp = kwargs['sample_size']
-        self.N_in = kwargs.get('input_size', 256)
+        self.input_size = kwargs.get('input_size', 256)
         self.N_h = kwargs.get('hid_size', 1024)
         self.hid0 = nn.Parameter(torch.rand(1, self.N_h), requires_grad=True)
-        self.add_module('w_x', nn.Linear(self.N_sp, self.N_in))
+        self.add_module('w_x', nn.Linear(self.N_sp, self.input_size))
         self.add_module('w_j', parent2inp)
-        self.add_module('recursive', nn.GRUCell(self.N_in, self.N_h))
+        self.add_module('recursive', nn.GRUCell(self.input_size, self.N_h))
         self.add_module('child', tier_low)
 
     def forward(self, x_in, hid_up):
         shape_ast(x_in, (-1, self.N_sp))
-        _B, _S = x.shape
+        _B, _S = x_in.shape
         shape_ast(hid_up, (_B, -1))
-        c_j = self.w_j(hid_up).split(self.N_in, dim=-1)
+        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
 
         x_in = deque(x_in.split(_S / self.R, dim=-1), maxlen=self.R)
         logsm, x_out = [[]] * 2
@@ -134,17 +134,17 @@ class SampleLevel(nn.modules.Module):
     def __init__(self, parent2inp, **kwargs):
         super(SampleLevel, self).__init__()
         self.N_sp = kwargs['frame_size']
-        self.N_in = kwargs.get('input_size', 256) # dimension of input vector
-        mlp_sizes = [self.N_in]+ kwargs.get('mlp_sizes', [1024,1024,256])
+        self.input_size = kwargs.get('input_size', 256) # dimension of input vector
+        mlp_sizes = [self.input_size]+ kwargs.get('mlp_sizes', [1024,1024,256])
         embd_size = kwargs.get('audio_embd', 0)
         self.embd_on = True if embd_size > 0 else False # whether to use an embdding layer for inputs
         self.D_bt = kwargs.get('bit_depth', 8)
         # self.R = ratio
         if self.embd_on:
             self.add_module('embd', nn.Linear(2 ** self.D_bt, embd_size))
-            self.add_module('w_x', nn.Linear(self.N_sp * embd_size, self.N_in))
+            self.add_module('w_x', nn.Linear(self.N_sp * embd_size, self.input_size))
         else:
-            self.add_module('w_x', nn.Linear(self.N_sp, self.N_in))
+            self.add_module('w_x', nn.Linear(self.N_sp, self.input_size))
         self.add_module('w_j', parent2inp)
         self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1]) for i in range(len(mlp_sizes)-1)])
         self.add_module('h2s', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
@@ -155,7 +155,7 @@ class SampleLevel(nn.modules.Module):
         _B, _S = x.shape
         shape_ast(hid_up, (_B, -1))
         x_out = deque(x.split(1, dim=1), maxlen=_S)
-        c_j = self.w_j(hid_up).split(self.N_in, dim=-1)
+        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
         logsm = []
         if self.embd_on:
             x_in = deque([self.x2vec(x, _B) for _x in x_out], maxlen=_S)
@@ -183,6 +183,53 @@ class SampleLevel(nn.modules.Module):
     def hid_init(self):
         pass
 
+class VocoderLevel(nn.modules.Module):
+    def __init__(self, parent2inp, **kwargs):
+        """
+        _V -> vocoder_size
+        _I -> input_size
+        _S -> frame_size, number of samples
+        mlp_sizes
+        """
+        super(VocoderLevel, self).__init__()
+        self.sample_size = kwargs['frame_size']
+        self.input_size = kwargs.get('input_size', 256) # dimension of input vector
+        mlp_sizes = [self.input_size]+ kwargs.get('mlp_sizes', [1024,1024,256])
+        self.add_module('w_x', nn.Linear(self.sample_size * self._V, self.input_size))
+        self.add_module('w_j', parent2inp)
+        self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1]) for i in range(len(mlp_sizes)-1)])
+        self.add_module('h2s', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
+        # self.add_module('log_softmax', nn.LogSoftmax(dim=-1))
+
+    def forward(self, x, hid_up):
+        shape_ast(x, (-1, self.sample_size * self.vocoder_size))
+        _B, _S = x.shape
+        shape_ast(hid_up, (_B, -1))
+        x_out = deque(x.split(self.vocoder_size, dim=1), maxlen=self.sample_size)
+        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
+        logsm = []
+        x_in = x_out
+        for _j in range(self.sample_size):
+            inp = self.w_x(torch.cat(x_in, dim=-1)) + c_j[_j]
+            for fc in self.mlp:
+                inp = F.relu(fc(inp))
+            out = F.log_softmax(self.h2s(inp))
+            logsm.append(out)
+            x_pre = torch.multinomial(torch.exp(out), 1)
+            x_out.append(x_pre)
+            if self.embd:
+                x_in.append(self.x2vec(x_pre))
+            else:
+                x_in.append(x_pre)
+        return logsm, x_out
+    #
+    # def x2vec(self, x, batch):
+    #     shape_ast(x, (batch, 1))
+    #     one_hot = torch.zeros(batch, 2 ** self.D_bt).scatter_(1, x, 1.)
+    #     return self.embd(one_hot)
+
+    def hid_init(self):
+        pass
 
 class SampleRNN(nn.modules.Module):
     def __init__(self, **kwargs):
@@ -202,13 +249,13 @@ class SampleRNN(nn.modules.Module):
         self.n_tiers = len(self.ratios) + 1
         self.FS = self.ratios + [samp_gen_kw['frame_size']]
         self.samp_sizes = list(np.cumprod(self.FS[::-1]))[:0:-1]
-        up_sizes = [vocoder_size] + self.gru_hid_sizes
+        up_sizes = [self.vocoder_size] + self.gru_hid_sizes
 
         params = zip(self.ratios, self.input_sizes, self.gru_hid_sizes, self.samp_sizes)
         params = [dict(zip(['ratio', 'input_size', 'hid_size', 'sample_size'], tp)) for tp in params]
         wj_prm = zip(up_sizes, self.FS, self.input_sizes + samp_gen_kw['input_size']) # 0, .., self.n_tiers-1
         wj_prm = [(tp[0], tp[1]*tp[2]) for tp in wj_prm]
-        tier = SampleGen(nn.Linear(*wj_prm[-1]), **samp_gen_kw)
+        tier = SampleLevel(nn.Linear(*wj_prm[-1]), **samp_gen_kw)
         for k in reversed(range(self.n_tiers-1)):
             w_j = nn.Linear(*wj_prm[k])
             tier = FrameLevel(tier, w_j, **params[k])

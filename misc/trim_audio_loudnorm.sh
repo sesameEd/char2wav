@@ -1,36 +1,32 @@
 #!/bin/bash
-######################################################################################
-# Trims audios by removing starting silence from wav. Ending silences are kept as they
-# are considered meaningful
-#   -i, --indir
-#       location of the input wav files, defaults to '../blzd/wav'
-#   -o, --outdir
-#       output directory of the trimmed audios defaults to '../blzd/trimmed'
-#   -m, --mode
-#       operation to be conducted: either of the two:
-#       trim: removes preceding silence of the audio files, helps align beginning of audio
-#       normalize: performs loudness normalization using ffmpeg to bring the average
-#           amplitude of all audio files to the same level;
-#       if both are selected, normalized wavs will overwrite the trimmed wavs in the outdir
-######################################################################################
+
+display_help() {
+    echo "Usage: $0 [-h --help] [-o --output <output_wav_dir>] [-m --mode <mode>] [-r --sample_rate n] <input_wav_dir>" >&2
+    echo
+    echo "   -o, --outdir       output directory of the trimmed audios, defaults to <input_wav_dir>/../normalized"
+    echo "   -m, --mode         operation to be conducted: either or both of the two:
+                                trim: removes preceding silence of the audio files, helps align beginning of audio
+                                normalize: performs loudness normalization using ffmpeg to bring the average amplitude of all audio files to the same level;
+                                if both are selected, normalized wavs will overwrite the trimmed wavs in the outdir"
+    echo "   -r, --sample_rate  The sampling rate of the wavs, defaults to 48000"
+    # exit 0
+}
 set -o errexit -o pipefail -o noclobber -o nounset
 ! getopt --test > /dev/null
 if [[ ${PIPESTATUS[0]} -ne 4 ]]; then
     echo 'I’m sorry, `getopt --test` failed in this environment.'
     exit 1; fi
 
-OPTIONS=o:m:r
-LONGOPTS=outdir:,mode:,sample_rate:
+OPTIONS=o:m:r:h
+LONGOPTS=outdir:,mode:,sample_rate:,help
 ! PARSED=$(getopt --options=$OPTIONS --longoptions=$LONGOPTS --name "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     exit 2; fi
 eval set -- "$PARSED"
 
-# wavdir="../blzd/raw"
-# outdir="../blzd/wav"
 TRIM=false
-NORMALIZE=true
+NORMALIZE=false
 SAMPLE_RATE=48000
 
 while true; do
@@ -50,10 +46,6 @@ while true; do
         esac
       shift 2
       ;;
-    # -i|--indir)
-    #   wavdir=$2
-    #   shift 2
-    #   ;;
     -o|--outdir)
       outdir=$2
       shift 2
@@ -62,31 +54,34 @@ while true; do
       SAMPLE_RATE=$2
       shift 2
       ;;
+    -h|--help)
+      display_help
+      exit 0
+      ;;
     --)
       shift
       break
       ;;
     *)
-      echo "Programming error"
+      echo "Refer to --help for available options"
       exit 3
       ;;
   esac
 done
 
 if [[ $# -ne 1 ]]; then
-    echo "$0: A single input directory is required."
+    echo "$0: A single input wavefile directory is required."
     exit 4; fi
 wavdir=$1
 if [ ! -v outdir ]; then
   outdir=${wavdir}/../normalized
   echo using default output directory: $outdir; fi
 
-# echo $PARSED
 echo wav directory is: $wavdir
 echo output files to: $outdir
 echo doing: trimming? $TRIM. normalization? $NORMALIZE
 echo using sample rate $SAMPLE_RATE
-
+exit 0
 if [ ! -d "$outdir" ]; then
   mkdir $outdir
 fi
@@ -101,7 +96,7 @@ fi
 if [ "$NORMALIZE" = true ]; then
   if [ "$TRIM" = true ]; then
     echo overwriting trimmed audio with normalized ones
-    ffmpeg-normalize $outdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav
+    ffmpeg-normalize $wavdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav
   else
     ffmpeg-normalize $wavdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav; fi
 fi

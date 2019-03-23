@@ -27,8 +27,8 @@ if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     exit 2; fi
 eval set -- "$PARSED"
 
-labdir="../blzd/txt"
-outdir="./data"
+labdir="data/txt"
+outdir="data/"
 GETVOCAB=false
 TKNZ=false
 
@@ -73,27 +73,25 @@ echo get vocab mode: $GETVOCAB
 echo input dir: $labdir
 echo output dir: $outdir
 
-if [ ! -d "$outdir" ]; then
-  mkdir $outdir
+if [ ! -d "$outdir/title" ]; then
+  mkdir $outdir/title
 fi
 
 if [ "$GETVOCAB" = true ]; then
-  echo "creating character vocab list for text:======================================="
-  echo -n "" >| ${outdir}/all.txt
-  if [ ! -e ${outdir}/title_count.txt ]; then
-    ls ${labdir}/ | sed 's/_[0-9]+_[0-9]+.txt//' | uniq -c > ${outdir}/title_count.txt
-    sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title_count.txt; fi
-  for book in `ls ${labdir} | sed 's/_[0-9]+_[0-9]+.txt//' | uniq`
-    echo $book
-    echo -n "" > ${outdir}/all_${book}.txt
+  echo "===================:creating character vocab list for text:===================="
+  echo -n "" >| ${outdir}/title/all.txt
+  ls ${labdir} | sed -r 's/_[0-9]+_[0-9]+.txt//' | uniq -c >| ${outdir}/title_count.txt
+  sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title_count.txt
+  for book in `ls ${labdir} | sed -r 's/_[0-9]+_[0-9]+.txt//' | uniq`; do
+    # echo $book
+    echo -n "" >| ${outdir}/title/all_${book}.txt
     for f in `ls ${labdir}/${book}_*.txt | sort`; do
-      echo `cat $f` >> ${outdir}/all_${book}.txt
-      echo `cat $f` >> ${outdir}/all.txt
-      # echo `cat $f` | tr '[:upper:]' '[:lower:]' >> ${outdir}/all_${book}.txt
-      # echo `cat $f` | tr '[:upper:]' '[:lower:]' >> ${outdir}/all.txt
+      echo `cat $f` >> ${outdir}/title/all_${book}.txt
+      echo `cat $f` >> ${outdir}/title/all.txt
     done
   done
-  od -cvAnone -w1 ${outdir}/all.txt | sort | uniq -c > $outdir/all.vcb
+  od -cvAn -w1 ${outdir}/title/all.txt | sort | uniq -c >| $outdir/all.vcb
+  sed -e 's/^[ \t]*//' -re 's/[[:space:]]{2,4}/\t/g' -e '/[0-9]$/d' -e '/\\n$/d' -i ${outdir}/all.vcb
 fi
 
 if [ "$TKNZ" = true ]; then

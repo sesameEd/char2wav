@@ -2,7 +2,7 @@
 import argparse
 from glob import glob
 import os
-from scipy.io import wavfile
+# from scipy.io import wavfile
 
 parser = argparse.ArgumentParser('Process and store data')
 parser.add_argument("--wav_dir", default='../blzd/wav', type=str, help='default to "blzd/" under parent directory')

@@ -5,42 +5,59 @@ import argparse
 from glob import glob
 from os import path
 import os
-# import subprocess
 import numpy as np
 import h5py
+# from sklearn import preprocessing
 
 parser = argparse.ArgumentParser(
-    "read wav files under in_dir and output magphase vocoder features to out_dir"
+    "if '--mode' is 'extract' or not given, " +
+    "       read wav files under 'wavdir' and output magphase vocoder features to 'vocdir'," +
+    "if '--mode' is 'synth', " +
+    "       synthesize wavs from the vocoder features in 'vocdir' and store in 'wavdir'"
     )
-parser.add_argument('-frac', nargs='?', const=1000, default=None)
+parser.add_argument('--frac', nargs='?', const=1000, default=None)
 parser.add_argument('-m', '--mode', dest='mode', nargs='?', default='extract',
-                    help='one of the two: \"extract\" (for extracting vocoder features) \
+                    help='one of the two: \"extract\" (for extracting vocoder features from raw wav files) \
                           or \"synth\" (for synthesizing from vocoder features)')
-parser.add_argument('--indir', default='../blzd/wav', type=str,
-                    help='default to "blzd" under parent directory')
-parser.add_argument('--outdir', default='./vocoder', type=str)
-parser.add_argument('--n_mag', '-M', default=60, type=int, dest='dim_mag')
-parser.add_argument('--n_real', '-R', default=10, type=int, dest='dim_real')
+parser.add_argument('-w', '--wavdir', default='data/normalized', type=str,
+                    help='default to "data/normalized"')
+parser.add_argument('-v', '--vocdir', default='data/vocoder', type=str,
+                    help='default to "data/vocoder"')
+parser.add_argument('-M', '--n_mag', default=60, type=int, dest='dim_mag')
+parser.add_argument('-R', '--n_real', default=10, type=int, dest='dim_real')
 parser.add_argument('-r', '--sample_rate', default=48000, dest='sample_rate')
+parser.add_argument('-o', '--overwrite', action='store_true',
+                    help="if turned on, existing files in vocdir (with same file \
+                          tokens as those in wavdir) will be overwritten.")
 parser.add_argument('--no_batch', action='store_false',
                     help='if activated, will not batch process files')
 args = vars(parser.parse_args())
 print(args)
-indir = args['indir']
-outdir = args['outdir']
 mode = args['mode']
 sample_rate = args['sample_rate']
 dim_mag = args['dim_mag']
 dim_real = args['dim_real']
 dim_imag = dim_real
 dim_f0 = 1
+if mode == "extract":
+    indir = args['wavdir']
+    outdir = args['vocdir']
+elif mode == "synth":
+    indir = args['vocdir']
+    outdir = args['wavdir']
+else:
+    raise ValueError("mode must be one of the two below: 'synth' or 'extract'")
+
+if glob(outdir):
+    in_files = glob(path.join(outdir, '*.hdf'))
+    already_in = set([path.basename(file).split('.')[0] for file in in_files])
+else:
+    os.mkdir(outdir)
+    already_in = set()
 
 # feats = [   'mag',       'real',  'imag',  'lf0']
-size_feats = [dim_mag, dim_real, dim_imag, dim_f0]
 global size_feats
-
-if not glob(outdir):
-    os.mkdir(outdir)
+size_feats = [dim_mag, dim_real, dim_imag, dim_f0]
 
 def read_binfile(filename, dim=60):
     fid = open(filename, 'rb')
@@ -65,15 +82,16 @@ def wav2voc(wavdir, outdir, wav_name, **kwargs):
     for feat_file, dim in zip(fnames_feats, dim_feats):
         mp_all.append(read_binfile(path.join(outdir, feat_file), dim))
     with h5py.File(path.join(outdir, wav_name + '.hdf5'), "w") as f:
-        f["mp_all"] = np.concatenate(mp_all, axis=1)
+        f["mp"] = np.concatenate(mp_all, axis=1)
 
 if __name__ == '__main__':
-    b_multiproc = args['no_batch'] # False if the flag is activated, otherwise True
-    # wavs = glob(indir + '/*')
+    b_multiproc = args['no_batch']   # False if the flag is activated, otherwise True
     files = glob(indir + '/*')
     if args['frac']:
         files = files[:700]
-    file_tkn = [path.basename(file).split('.')[0] for file in files]
+    all_tkn = set([path.basename(file).split('.')[0] for file in files])
+    if not args['overwrite']:
+        file_tkn = all_tkn - already_in
 
     if mode == "extract":
         if b_multiproc:
@@ -81,13 +99,27 @@ if __name__ == '__main__':
         else:
             for wn in file_tkn:
                 wav2voc(indir, outdir, wn)
+        all_mps = []
+        for tkn in sorted(all_tkn):
+            with h5py.File(os.path.join(outdir, tkn+'.hdf5'), 'r') as f:
+                all_mps.append(np.array(f.get('mp')))
+        all_cat = np.concatenate(all_mps, axis=0)
+        all_mean, all_std = all_cat.mean(axis=0), all_cat.std(axis=0)
+        all_cat = (all_cat - all_mean) / all_std
+        sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
+        with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
+            f.create_dataset('voc_scaled_cat', all_cat.shape, data=all_cat)
+            f.create_dataset('voc_sent_idx', data=sent_idx, dtype=int)
+            f.create_dataset('voc_mean', data=all_mean)
+            f.create_dataset('voc_std', data=all_std)
+            print f['voc_scaled_cat'].shape
+            print sent_idx[-1]
 
     if mode == "synth":
-        file_tkn = [path.basename(file).split('.')[0] for file in files]
         lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
-                             './vocoder',
+                             indir,
                              file_tkn,
-                             './wavs_syn',
+                             outdir,
                              dim_mag,
                              dim_real,
                              sample_rate,
