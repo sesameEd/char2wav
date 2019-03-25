@@ -194,8 +194,9 @@ class VocoderLevel(nn.modules.Module):
         super(VocoderLevel, self).__init__()
         self.sample_size = kwargs['frame_size']
         self.input_size = kwargs.get('input_size', 256) # dimension of input vector
+        self.vocoder_size = kwargs.get('vocoder_size', 81)
         mlp_sizes = [self.input_size]+ kwargs.get('mlp_sizes', [1024,1024,256])
-        self.add_module('w_x', nn.Linear(self.sample_size * self._V, self.input_size))
+        self.add_module('w_x', nn.Linear(self.sample_size * self.vocoder_size, self.input_size))
         self.add_module('w_j', parent2inp)
         self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1]) for i in range(len(mlp_sizes)-1)])
         self.add_module('h2v', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
@@ -207,21 +208,21 @@ class VocoderLevel(nn.modules.Module):
         shape_ast(hid_up, (_B, -1))
         x_out = deque(x.split(self.vocoder_size, dim=1), maxlen=self.sample_size)
         c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
-        logsm = []
+        # logsm = []
         x_in = x_out
         for _j in range(self.sample_size):
             inp = self.w_x(torch.cat(x_in, dim=-1)) + c_j[_j]
             for fc in self.mlp:
                 inp = F.relu(fc(inp))
             out = F.log_softmax(self.h2v(inp))
-            logsm.append(out)
+            # logsm.append(out)
             x_pre = torch.multinomial(torch.exp(out), 1)
             x_out.append(x_pre)
             if self.embd:
                 x_in.append(self.x2vec(x_pre))
             else:
                 x_in.append(x_pre)
-        return logsm, x_out
+        return x_out
     #
     # def x2vec(self, x, batch):
     #     shape_ast(x, (batch, 1))
