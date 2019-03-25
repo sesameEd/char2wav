@@ -97,9 +97,9 @@ fi
 if [ "$BYTITLE" = true ]; then
   echo "===================:creating character vocab and title count:===================="
   echo -n "" >| ${outdir}/all.txt
-  find ${transdir} -type f -printf "%f\n" | sed -r "s/${SUFFIX}//" | uniq -c >| ${outdir}/title_count.txt
+  find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | uniq -c >| ${outdir}/title_count.txt
   sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title_count.txt
-  for book in `find ${transdir} -type f -printf "%f\n" | sed -r "s/${SUFFIX}//" | uniq`; do
+  for book in `find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | uniq`; do
     # echo $book
     echo -n "" >| ${outdir}/all_${book}.txt
     for f in `ls ${transdir}/${book}* | sort`; do
