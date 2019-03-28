@@ -109,11 +109,11 @@ if __name__ == '__main__':
         sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
         with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
             f.create_dataset('voc_scaled_cat', all_cat.shape, data=all_cat)
-            f.create_dataset('voc_sent_idx', data=sent_idx, dtype=int)
+            f.create_dataset('voc_utt_idx', data=sent_idx, dtype=int)
             f.create_dataset('voc_mean', data=all_mean)
             f.create_dataset('voc_std', data=all_std)
-            print f['voc_scaled_cat'].shape
-            print sent_idx[-1]
+            print(f['voc_scaled_cat'].shape)
+            print(sent_idx[-1])
 
     if mode == "synth":
         lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,

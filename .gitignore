@@ -14,3 +14,5 @@ misc/test_getopt.sh
 *.wav
 *.ipynb
 *.h5
+*.txt
+*.out
