@@ -2,24 +2,26 @@
 GET_MAGPHASE=true
 
 TOKENIZE=true
-GET_NLTK=false
-GET_CORENLP=true
-
 LOUDNORM=true
-GET_FFMPEG=false
-GET_FMN=false
 
 git submodule update --init --recursive
 
 if [ "$TOKENIZE" = true ]; then
   echo compiling tokenization tools: Stanford CoreNLP
   GET_CORENLP=true
+  GET_NLTK=false
+else
+  GET_CORENLP=false
+  GET_NLTK=false
 fi
 
 if [ "$LOUDNORM" = true ]; then
   echo compiling loudnorm tools: ffmpeg, ffmpeg-normalize
   GET_FFMPEG=true
   GET_FMN=true
+else
+  GET_FFMPEG=false
+  GET_FMN=false
 fi
 
 if [ "$GET_MAGPHASE" = true ]; then
