@@ -17,8 +17,9 @@ The python scripts `voc_extract.py` and `char_extract.py` are for extracting the
 representations of the data (magphase vocoder features for audio files, and
 one-hot encoded character sequence for transcripts).
 
-Data management: some of the scripts assume the input files to be under directory
-`data/<type/of/file>`: ground-truth vocoder features under `data/vocoder`, and loud-normed
+Data management: the scripts assume the input files to be under directory
+`data/<type/of/file>` and also output files accordingly:
+ground-truth vocoder features under `data/vocoder`, loud-normed
 wav files under `data/normalized`. So for convenience, copy the wavs and transcripts to
 corresponding directories:
 ```shell
@@ -35,8 +36,7 @@ or refer to the helper documentation with `--help` flag.
 ```shell
 ./compile_tools.sh --loudnorm
 ```
-- to trim initial silence and to perform loudness normalization on audio files,
-copy wav files to  `data/wav` (most of the scripts expect the ), then run
+- to trim initial silence and to perform loudness normalization on audio files
 ```shell
 ./misc/trim_audio_loudnorm.sh data/wav
 ```

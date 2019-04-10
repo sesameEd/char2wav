@@ -85,7 +85,7 @@ echo wav directory is: $wavdir
 echo output files to: $outdir
 echo doing: trimming? $TRIM. normalization? $NORMALIZE
 echo using sample rate $SAMPLE_RATE
-exit 0
+
 if [ ! -d "$outdir" ]; then
   mkdir $outdir
 fi

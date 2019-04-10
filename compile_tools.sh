@@ -20,6 +20,11 @@ display_help() {
     echo "-a, --all            compiles all of the above dependencies"
 }
 
+GET_CORENLP=false
+GET_FFMPEG=false
+GET_FMN=false
+GET_MAGPHASE=false
+
 while true; do
     case "$1" in
       -t|--tokenize)
