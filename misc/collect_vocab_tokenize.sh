@@ -21,7 +21,8 @@ TKNZ=true
 BYTITLE=false
 SUFFIX=_[0-9]{3}_[0-9]{3}.txt
 display_help() {
-    echo "Usage: $0 [-h --help] [-o --output <output_wav_dir>] [-m --mode <mode>] [-r --sample_rate n] <input_wav_dir>" >&2
+    echo "Usage: $0 [-h --help] [-i --indir <input/transcript>] [-o --output <output_wav_dir>]
+          [-m --mode getvocab|tokenize|all] [-t --bytitle]" >&2
     echo
     echo "     -i, --indir       location of the transcript files, defaults to 'data/txt'"
     echo "     -o, --outdir      output directory of the processed files (vocab list or tokenized texts), defaults to 'data/title'"
@@ -42,6 +43,10 @@ while true; do
             ;;
           tokenize)
             GETVOCAB=false
+            ;;
+          all)
+            TKNZ=true
+            GETVOCAB=true
             ;;
           *)
             echo mode must be one of below: getvocab, tokenize

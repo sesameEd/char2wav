@@ -6,8 +6,26 @@ import torch.nn.functional as F
 from collections import deque
 
 def shape_ast(t, shape):
-    assert len(t.shape) == len(shape) and (x == y or y == -1 for x, y in zip(t.shape, shape)).all(), \
-    'Expected shape ({}), got shape ({})'.format(', '.join(shape), ', '.join(t.shape))
+    assert len(t.shape) == len(shape) and all(x == y or y == -1 for x, y in zip(t.shape, shape)), \
+    'Expected shape ({}), got shape ({})'.format(', '.join(map(str, shape)), ', '.join(map(str, t.shape)))
+
+def init_weights(name, net):
+    suffix = name.split('.')[-1]
+    if suffix.split('_')[0] == 'bias':
+        net.data.fill_(0.)
+    elif suffix == 'weight_ih':
+        for ih in net.chunk(3, 0):
+            torch.nn.init.xavier_uniform_(ih)
+    elif suffix == 'weight_hh':
+        for hh in net.chunk(3, 0):
+            torch.nn.init.orthogonal_(hh)
+    elif suffix == 'hid0':
+        torch.nn.init.normal_(net)
+    else:
+        print(name)
+
+def to_onehot(idx, batch, N_cat):
+    return torch.zeros(batch, N_cat).scatter_(1, idx, 1.)
 
 class Attn(nn.modules.Module):
     def __init__(self, **kwargs):
@@ -94,33 +112,34 @@ class Char2Vocoder(nn.modules.Module):
         result = torch.stack(result).transpose(0, 1)
         return result
 
-
 class FrameLevel(nn.modules.Module):
     def __init__(self, tier_low, parent2inp, **kwargs):
         super(FrameLevel, self).__init__()
         self.R = kwargs['ratio']
-        self.N_sp = kwargs['sample_size']
-        self.input_size = kwargs.get('input_size', 256)
-        self.N_h = kwargs.get('hid_size', 1024)
-        self.hid0 = nn.Parameter(torch.rand(1, self.N_h), requires_grad=True)
-        self.add_module('w_x', nn.Linear(self.N_sp, self.input_size))
+        self.S = kwargs['sample_size']
+        self.I = kwargs.get('input_size', 256)
+        self.H = kwargs.get('hid_size', 1024)
+        self.G = kwargs.get('gen_size', 1)
+        self.hid0 = nn.Parameter(torch.rand(1, self.H), requires_grad=True)
+        assert ((self.S / self.R) * self.G).is_integer(), print('frame size wrong')
+        self.add_module('w_x', nn.Linear(int((self.S / self.R) * self.G), self.I))
         self.add_module('w_j', parent2inp)
-        self.add_module('recursive', nn.GRUCell(self.input_size, self.N_h))
+        self.add_module('recursive', nn.GRUCell(self.I, self.H))
         self.add_module('child', tier_low)
 
     def forward(self, x_in, hid_up):
-        shape_ast(x_in, (-1, self.N_sp))
-        _B, _S = x_in.shape
+        shape_ast(x_in, (-1, self.S * self.G))
+        _B, _SG = x_in.shape
         shape_ast(hid_up, (_B, -1))
-        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
-
-        x_in = deque(x_in.split(_S / self.R, dim=-1), maxlen=self.R)
-        logsm, x_out = [[]] * 2
+        c_j = self.w_j(hid_up).split(self.I, dim=-1)
+        x_in = deque(x_in.chunk(self.R, dim=-1), maxlen=self.R)
+        # shape of each element: (B, S/R * G)
+        logsm, x_out = [], []
         for _j in range(self.R):
             inp = self.w_x(x_in[-1]) + c_j[_j]
             self.hid = self.recursive(inp, self.hid)
-            logsm_pre, x_pre = self.child(torch.cat(x_in[_j], dim=-1), self.hid)
-            x_in.append(torch.stack(x_pre, dim=2))
+            logsm_pre, x_pre = self.child(x_in[-1], self.hid)
+            x_in.append(torch.cat(x_pre, dim=-1))
             x_out += x_pre
             logsm += logsm_pre
         return logsm, x_out
@@ -133,103 +152,80 @@ class FrameLevel(nn.modules.Module):
 class SampleLevel(nn.modules.Module):
     def __init__(self, parent2inp, **kwargs):
         super(SampleLevel, self).__init__()
-        self.N_sp = kwargs['frame_size']
-        self.input_size = kwargs.get('input_size', 256) # dimension of input vector
-        mlp_sizes = [self.input_size]+ kwargs.get('mlp_sizes', [1024,1024,256])
+        self.S = kwargs.get('frame_size', 8)
+        self.I = kwargs.get('gen_in_size', 256) # dimension of input vector
+        mlp_sizes = [self.I]+ kwargs.get('mlp_sizes', [1024,1024,256])
         embd_size = kwargs.get('audio_embd', 0)
         self.embd_on = True if embd_size > 0 else False # whether to use an embdding layer for inputs
         self.D_bt = kwargs.get('bit_depth', 8)
         # self.R = ratio
         if self.embd_on:
             self.add_module('embd', nn.Linear(2 ** self.D_bt, embd_size))
-            self.add_module('w_x', nn.Linear(self.N_sp * embd_size, self.input_size))
+            self.add_module('w_x', nn.Linear(self.S * embd_size, self.I))
         else:
-            self.add_module('w_x', nn.Linear(self.N_sp, self.input_size))
+            self.add_module('w_x', nn.Linear(self.S, self.I))
         self.add_module('w_j', parent2inp)
         self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1]) for i in range(len(mlp_sizes)-1)])
         self.add_module('h2s', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
-        self.add_module('log_softmax', nn.LogSoftmax(dim=-1))
 
     def forward(self, x, hid_up):
-        shape_ast(x, (-1, self.N_sp))
+        shape_ast(x, (-1, self.S))
         _B, _S = x.shape
         shape_ast(hid_up, (_B, -1))
         x_out = deque(x.split(1, dim=1), maxlen=_S)
-        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
+        c_j = self.w_j(hid_up).split(self.I, dim=-1)
         logsm = []
         if self.embd_on:
-            x_in = deque([self.x2vec(x, _B) for _x in x_out], maxlen=_S)
+            x_in = deque([self.x2vec(_x.long(), _B) for _x in x_out], maxlen=_S)
         else:
             x_in = x_out
         for _j in range(_S):
-            inp = self.w_x(torch.cat(x_in, dim=-1)) + c_j[_j]
+            inp = self.w_x(torch.cat(list(x_in), dim=-1)) + c_j[_j]
             for fc in self.mlp:
-                inp = F.relu(fc(inp))
-            out = F.log_softmax(self.h2s(inp))
+                inp = fc(F.relu(inp))
+            out = F.log_softmax(self.h2s(inp), dim=-1)
             logsm.append(out)
             x_pre = torch.multinomial(torch.exp(out), 1)
-            x_out.append(x_pre)
-            if self.embd:
-                x_in.append(self.x2vec(x_pre))
+            if self.embd_on:
+                x_in.append(self.x2vec(x_pre, _B))
             else:
                 x_in.append(x_pre)
-        return logsm, x_out
+            x_out.append(x_pre.float())
+        return logsm, list(x_out)
 
     def x2vec(self, x, batch):
         shape_ast(x, (batch, 1))
-        one_hot = torch.zeros(batch, 2 ** self.D_bt).scatter_(1, x, 1.)
-        return self.embd(one_hot)
+        return self.embd(to_onehot(x, batch, 2 ** self.D_bt))
 
-    def hid_init(self):
+    def hid_init(self, batch):
         pass
 
 class VocoderLevel(nn.modules.Module):
     def __init__(self, parent2inp, **kwargs):
-        """
-        _V -> vocoder_size
-        _I -> input_size
-        _S -> frame_size, number of samples
-        mlp_sizes
-        """
         super(VocoderLevel, self).__init__()
-        self.sample_size = kwargs['frame_size']
-        self.input_size = kwargs.get('input_size', 256) # dimension of input vector
+        self.sample_size = kwargs.get('frame_size', 8)
+        self.I = kwargs.get('gen_in_size', 256) # dimension of input vector
         self.vocoder_size = kwargs.get('vocoder_size', 81)
-        mlp_sizes = [self.input_size]+ kwargs.get('mlp_sizes', [1024,1024,256])
-        self.add_module('w_x', nn.Linear(self.sample_size * self.vocoder_size, self.input_size))
+        mlp_sizes = [self.I] + kwargs.get('mlp_sizes', [1024,512]) + [self.vocoder_size]
+        self.add_module('w_x', nn.Linear(self.sample_size * self.vocoder_size, self.I))
         self.add_module('w_j', parent2inp)
         self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1]) for i in range(len(mlp_sizes)-1)])
-        self.add_module('h2v', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
-        # self.add_module('log_softmax', nn.LogSoftmax(dim=-1))
+        # self.add_module('conv1', nn.Conv1d(in_channels=1, out_channels=6, kernel_size=10, stride=5))
 
     def forward(self, x, hid_up):
         shape_ast(x, (-1, self.sample_size * self.vocoder_size))
-        _B, _S = x.shape
+        _B, _S  = x.shape
         shape_ast(hid_up, (_B, -1))
         x_out = deque(x.split(self.vocoder_size, dim=1), maxlen=self.sample_size)
-        c_j = self.w_j(hid_up).split(self.input_size, dim=-1)
-        # logsm = []
-        x_in = x_out
+        c_j = self.w_j(hid_up).split(self.I, dim=-1)
         for _j in range(self.sample_size):
-            inp = self.w_x(torch.cat(x_in, dim=-1)) + c_j[_j]
+            inp = self.w_x(torch.cat(list(x_out), dim=-1)) + c_j[_j]
             for fc in self.mlp:
-                inp = F.relu(fc(inp))
-            out = F.log_softmax(self.h2v(inp))
-            # logsm.append(out)
-            x_pre = torch.multinomial(torch.exp(out), 1)
-            x_out.append(x_pre)
-            if self.embd:
-                x_in.append(self.x2vec(x_pre))
-            else:
-                x_in.append(x_pre)
-        return x_out
-    #
-    # def x2vec(self, x, batch):
-    #     shape_ast(x, (batch, 1))
-    #     one_hot = torch.zeros(batch, 2 ** self.D_bt).scatter_(1, x, 1.)
-    #     return self.embd(one_hot)
+                inp = fc(F.relu(inp))
+            x_out.append(inp)
+        return [], list(x_out)
 
-    def hid_init(self):
+    def hid_init(self, batch):
         pass
 
 class SampleRNN(nn.modules.Module):
@@ -239,24 +235,52 @@ class SampleRNN(nn.modules.Module):
         self.ratios = kwargs.get('ratios', [1,2,2])
         self.input_sizes = kwargs.get('input_sizes', [256, 256, 256])
         self.gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024, 1024])
-        samp_gen_kw = {'frame_size' : kwargs.get('frame_size', 8),
-                       'input_size' : kwargs.get('gen_in_size', 256),
-                       'mlp_sizes' : kwargs.get('mlp_sizes', [1024, 1024, 256]),
-                       'audio_embd' : kwargs.get('audio_embd', 0),
-                       'bit_depth' : kwargs.get('bit_depth', 8)}
-        if len(self.ratios) != len(self.input_sizes) or len(self.input_sizes) != len(self.gru_hid_sizes):
+        self.gen_sample = kwargs.get('sample_level', False)
+        if self.gen_sample:
+#             generator_kw = {'frame_size' : kwargs.get('frame_size', 8),
+#                             'gen_in_size' : kwargs.get('gen_in_size', 256),
+#                             'mlp_sizes' : kwargs.get('mlp_sizes', [1024, 1024, 256]),
+#                             'audio_embd' : kwargs.get('audio_embd', 0),
+#                             'bit_depth' : kwargs.get('bit_depth', 8)}
+            self.gen_size = 1
+        else:
+#             generator_kw = {'frame_size' : kwargs.get('frame_size', 8),
+#                             'gen_in_size' : kwargs.get('gen_in_size', 256),
+#                             'mlp_sizes' : kwargs.get('mlp_sizes', [1024, 512]),
+#                             'vocoder_size' : kwargs.get('vocoder_size', 81)
+#             }
+            self.gen_size = self.vocoder_size
+        if (len(self.ratios) != len(self.input_sizes) or
+            len(self.input_sizes) != len(self.gru_hid_sizes)):
             print('Wrong size for the lists of params, {0} frame sizes,'.format(len(self.ratios)),
                   '{0} input sizes, and {1} recurrent sizes'.format(len(self.input_sizes), len(self.gru_hid_sizes)))
         self.n_tiers = len(self.ratios) + 1
-        self.FS = self.ratios + [samp_gen_kw['frame_size']]
+        self.FS = self.ratios + [kwargs.get('frame_size', 8)]
         self.samp_sizes = list(np.cumprod(self.FS[::-1]))[:0:-1]
         up_sizes = [self.vocoder_size] + self.gru_hid_sizes
 
-        params = zip(self.ratios, self.input_sizes, self.gru_hid_sizes, self.samp_sizes)
-        params = [dict(zip(['ratio', 'input_size', 'hid_size', 'sample_size'], tp)) for tp in params]
-        wj_prm = zip(up_sizes, self.FS, self.input_sizes + samp_gen_kw['input_size']) # 0, .., self.n_tiers-1
+        params = zip(
+            self.ratios,
+            self.input_sizes,
+            self.gru_hid_sizes,
+            self.samp_sizes,
+            [self.gen_size] * len(self.ratios)
+        )
+        params = [dict(zip(['ratio',
+                            'input_size',
+                            'hid_size',
+                            'sample_size',
+                            'gen_size'],
+                           tp))
+                  for tp in params]
+        wj_prm = zip(up_sizes, self.FS, self.input_sizes + [kwargs.get('gen_in_size', 256)]) # 0, .., self.n_tiers-1
         wj_prm = [(tp[0], tp[1]*tp[2]) for tp in wj_prm]
-        tier = SampleLevel(nn.Linear(*wj_prm[-1]), **samp_gen_kw)
+        if self.gen_sample:
+            self.gen_size = 1
+#             tier = SampleLevel(nn.Linear(*wj_prm[-1]), **generator_kw)
+            tier = SampleLevel(nn.Linear(*wj_prm[-1]), **kwargs)
+        else:
+            tier = VocoderLevel(nn.Linear(*wj_prm[-1]), **kwargs)
         for k in reversed(range(self.n_tiers-1)):
             w_j = nn.Linear(*wj_prm[k])
             tier = FrameLevel(tier, w_j, **params[k])
@@ -264,32 +288,39 @@ class SampleRNN(nn.modules.Module):
 
     def forward(self, vocoder):
         """
-        :output log prob and prob, of shape (_T, _B, 2 ** depth)
+        :input array of vocoders, of shape (_T, _B, _V)
+        :output
+            if self.gen_sample (generates raw waves):
+                log prob and prob, of shape (_T * pi(FS), _B, 2 ** depth)
+            if not (generates vocoder features):
+                [] and vocoders, of shape (_T * pi(FS), _B, _V)
         """
         shape_ast(vocoder, (-1, -1, self.vocoder_size))
         _T, _B, _V = vocoder.shape
         self.srnn.hid_init(_B)
         x_in = self.x_init(_B)
-        logsm, x_out = [[]] * 2
+        logsm, x_out = [], []
         vocoder_single = vocoder.split(1, dim=0)
         for voc in vocoder_single:
-            logsm_pre, x_pre = self.srnn(x_in, voc)
+            logsm_pre, x_pre = self.srnn(x_in, voc.squeeze_(dim=0))
             x_in = torch.cat(x_pre, dim=-1)
             x_out += x_pre
             logsm += logsm_pre
-        logsm = torch.stack(logsm, dim=0)
         x_out = torch.stack(x_out, dim=0)
+        if self.gen_sample:
+            logsm = torch.stack(logsm, dim=0)
         return logsm, x_out
 
     def x_init(self, batch):
-        return torch.zeros(batch, self.samp_sizes[0])
+        return torch.zeros(batch, self.samp_sizes[0] * self.gen_size)
 
 class Char2Wav(nn.modules.Module):
     def __init__(self, **kwargs):
         super(Char2Wav, self).__init__()
         _L = kwargs['len_seq']
-        _V = kwargs.get('vocoder_size', 512)
-        self.char2voc = Char2Vocoder(
+        _V = kwargs.get('vocoder_size', 81)
+        self.gen_sample = kwargs.get('sample_level', False)
+        self.char2v = Char2Voc(
             len_seq = _L,
             vocoder_size = _V,
             num_type = kwargs['num_type'],
@@ -297,21 +328,44 @@ class Char2Wav(nn.modules.Module):
             encoded_size = kwargs.get('encoded_size', 1024),
             decoded_size = kwargs.get('decoded_size', 1024),
             mlp_sizes = kwargs.get('de2voc_mlp_sizes', [1024])
+        )
+        if self.gen_sample:
+            self.samplernn = SampleRNN(
+                vocoder_size = _V,
+                ratios = kwargs.get('ratios', [1,2,2]),
+                input_sizes = kwargs.get('input_sizes', [256, 256, 256]),
+                gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024, 1024]),
+                frame_size = kwargs.get('frame_size', 8),
+                input_size = kwargs.get('gen_in_size', 256),
+                mlp_sizes = kwargs.get('mlp_sizes', [1024, 1024, 256]),
+                audio_embd = kwargs.get('audio_embd', 0),
+                bit_depth = kwargs.get('bit_depth', 8)
             )
-        self.samplernn = SampleRNN(
-            vocoder_size = _V,
-            ratios = kwargs.get('ratios', [1,2,2]),
-            input_sizes = kwargs.get('input_sizes', [256, 256, 256]),
-            gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024, 1024]),
-            frame_size = kwargs.get('frame_size', 8),
-            input_size = kwargs.get('gen_in_size', 256),
-            mlp_sizes = kwargs.get('mlp_sizes', [1024, 1024, 256]),
-            audio_embd = kwargs.get('audio_embd', 0),
-            bit_depth = kwargs.get('bit_depth', 8)
+        else:
+            self.samplernn = SampleRNN(
+                vocoder_size = _V,
+                ratios = kwargs.get('ratios', [1,2]),
+                input_sizes = kwargs.get('input_sizes', [256, 256]),
+                gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024]),
+                frame_size = kwargs.get('frame_size', 8),
+                input_size = kwargs.get('gen_in_size', 256),
+                mlp_sizes = kwargs.get('mlp_sizes', [1024, 256]),
             )
 
     def forward(self, char_seq):
-        # shape_ast(char_seq, )
-        voc_pred = self.char2voc(char_seq)
+        voc_pred = self.char2v(char_seq)
         logsm, audio_out = self.samplernn(voc_pred)
         return logsm, audio_out
+
+if __name__ == "__main__":
+    print('Running toy forward prop...')
+    srnn = SampleRNN(
+        vocoder_size = 81,
+        ratios = [2],
+        input_sizes = [512],
+        gru_hid_sizes = [1024]
+        )
+    srnn.apply(init_weights)
+    test_voc = torch.rand((1, 20, 81))
+    # with torch.no_grad:
+    #     out = srnn()

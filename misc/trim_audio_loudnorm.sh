@@ -1,7 +1,7 @@
 #!/bin/bash
 
 display_help() {
-    echo "Usage: $0 [-h --help] [-o --output <output_wav_dir>] [-m --mode <mode>] [-r --sample_rate n] <input_wav_dir>" >&2
+    echo "Usage: $0 [-h --help] [-o --outdir <output_wav_dir>] [-m --mode <mode>] [-r --sample_rate n] <input_wav_dir>" >&2
     echo
     echo "   -o, --outdir       output directory of the trimmed audios, defaults to <input_wav_dir>/../normalized"
     echo "   -m, --mode         operation to be conducted: either or both of the two:
@@ -25,8 +25,8 @@ if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
     exit 2; fi
 eval set -- "$PARSED"
 
-TRIM=false
-NORMALIZE=false
+TRIM=true
+NORMALIZE=true
 SAMPLE_RATE=48000
 
 while true; do
@@ -35,9 +35,13 @@ while true; do
       mode=$2
       case "$mode" in
         trim)
-          TRIM=true
+          NORMALIZE=false
           ;;
         normalize)
+          TRIM=false
+          ;;
+        both)
+          TRIM=true
           NORMALIZE=true
           ;;
         *)

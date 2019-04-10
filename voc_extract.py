@@ -23,6 +23,7 @@ parser.add_argument('-w', '--wavdir', default='data/normalized', type=str,
                     help='default to "data/normalized"')
 parser.add_argument('-v', '--vocdir', default='data/vocoder', type=str,
                     help='default to "data/vocoder"')
+
 parser.add_argument('-M', '--n_mag', default=60, type=int, dest='dim_mag')
 parser.add_argument('-R', '--n_real', default=10, type=int, dest='dim_real')
 parser.add_argument('-r', '--sample_rate', default=48000, dest='sample_rate')
