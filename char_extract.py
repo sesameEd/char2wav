@@ -105,7 +105,8 @@ if __name__ == "__main__":
     bow_id, eow_id = get_bow_eow(all_sents)
     assert eos_id[-1] == eow_id[-1], 'did not get the right sentence or word boundaries'
     assert eos_id[-1] + 1 == utt_id[-1], 'index of last character does not accord'
-    assert all(np.in1d(utt_id[:-1], bow_id, assume_unique=True)), 'some utts didn\'t end with a whole word?'
+    assert all(np.in1d(utt_id[:-1], bow_id, assume_unique=True)), \
+        'utts no. {} didn\'t start with word boundary.'.format(np.where(np.in1d(utt_id[:-1], bow_id)==False)[0])
     if do_align:
         ebows_inplace = np.sum([bin_annotate_1d(ids, utt_id[-1])
                                 for ids in [bos_id, eos_id, bow_id, eow_id]], 0)

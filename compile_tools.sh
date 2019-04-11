@@ -94,7 +94,8 @@ if [ "$GET_FFMPEG" = true ]; then
   echo ================================compiling ffmpeg==============================
   git submodule update --init ffmpeg
   cd ffmpeg
-  ./configure
+  ./configure --disable-ffplay --disable-ffprobe --disable-avdevice --disable-avcodec \
+    --disable-avformat --disable-swresample --disable-swscale --disable-postproc
   if [ $? -eq 0 ]; then
     echo if you received error message concerning \"yasm\", run \"sudo apt-get install yasm\" and retry
   fi

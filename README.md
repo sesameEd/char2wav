@@ -57,7 +57,7 @@ ffmpeg-normalize input/wav/dir/*.wav -ar $SAMPLE_RATE -f -of output/wav/dir -ext
 ```
 - to collect transcripts into one file and tokenize it
 ```shell
-./collect_vocab_tokenize.sh
+./misc/collect_vocab_tokenize.sh
 ```
 #### Extracting ground truth vocoder features
 - install vocoder dependency with

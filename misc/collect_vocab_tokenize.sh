@@ -94,10 +94,10 @@ if [ "$GETVOCAB" = true ]; then
     echo "===================:creating character vocab and title count:===================="
     echo -n "" >| ${outdir}/all.txt
     find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | uniq -c >| ${outdir}/title.freq
-    sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title.freq
     if [ $? -eq 0 ]; then
       echo "Succesfully counted utterances under each title and stored in tab-separated file ${outdir}/title.freq"
     fi
+    sed -e 's/^[ \t]*//' -e 's/ /\t/' -i ${outdir}/title.freq
     for book in `find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | uniq`; do
       # echo $book
       echo -n "" >| ${outdir}/all_${book}.txt
@@ -107,7 +107,7 @@ if [ "$GETVOCAB" = true ]; then
       done
     done
     sed -z 's/\([a-z]\)\n\([A-Z]\)/\1.\n\2/g' -i ${outdir}/all.txt
-    awk '{print length}' ${outdir}/all.txt | sort -g | uniq -c | tail -10
+    # awk '{print length}' ${outdir}/all.txt | sort -g | uniq -c | tail -10
     if [ $? -eq 0 ]; then
       echo "All transcripts are collected in order and stored in file ${outdir}/all.txt"
     fi
