@@ -50,6 +50,7 @@ else:
     raise ValueError("mode must be one of the two below: 'synth' or 'extract'")
 
 if glob(outdir):
+    print(outdir)
     in_files = glob(path.join(outdir, '*.hdf'))
     already_in = set([path.basename(file).split('.')[0] for file in in_files])
 else:
@@ -86,16 +87,16 @@ def wav2voc(wavdir, outdir, wav_name, **kwargs):
         f["mp"] = np.concatenate(mp_all, axis=1)
 
 if __name__ == '__main__':
-    b_multiproc = args['no_batch']   # False if the flag is activated, otherwise True
+    do_parallelize = args['no_batch']   # False if the flag is activated, otherwise True
     files = glob(indir + '/*')
     if args['frac']:
         files = files[:700]
     all_tkn = set([path.basename(file).split('.')[0] for file in files])
     if not args['overwrite']:
-        file_tkn = all_tkn - already_in
+        file_tkn = sorted(all_tkn - already_in)
 
     if mode == "extract":
-        if b_multiproc:
+        if do_parallelize:
             lu.run_multithreaded(wav2voc, indir, outdir, file_tkn)
         else:
             for wn in file_tkn:
@@ -117,13 +118,23 @@ if __name__ == '__main__':
             print(sent_idx[-1])
 
     if mode == "synth":
-        lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
-                             indir,
-                             file_tkn,
-                             outdir,
-                             dim_mag,
-                             dim_real,
-                             sample_rate,
-                             None,
-                             'no',
-                             True)
+        if do_parallelize:
+            lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
+                                 indir,
+                                 file_tkn,
+                                 outdir,
+                                 dim_mag,
+                                 dim_real,
+                                 sample_rate,
+                                 None,
+                                 'no',
+                                 True)
+        else:
+            for tkn in file_tkn:
+                mp.synthesis_from_acoustic_modelling(indir, tkn, outdir,
+                                                      mag_dim = dim_mag,
+                                                      phase_dim = dim_real,
+                                                      fs = sample_rate,
+                                                      fft_len=None,
+                                                      pf_type='no',
+                                                      b_const_rate=True)
