@@ -10,12 +10,20 @@ import argparse
 import h5py
 import numpy as np
 import math
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser(
     "-s | --samplernn, train sample_rnn"
     )
 parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true')
+parser.add_argument('--epochs', type=int, default=10)
+parser.add_argument('--batch_size', type=int, default=32)
+parser.add_argument('--truncate_size', type=int, default=512)
 args = vars(parser.parse_args())
+
+truncate_size = args['truncate_size']
+batch_size = args['batch_size']
+epochs = args['epochs']
 
 def split_by_size(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -62,10 +70,7 @@ class StatefulSampler(Sampler):
 if __name__ == "__main__":
     if args['train_srnn']:
         ratios = [1, 2, 2, 8]
-        truncate_size = 512
-        batch_size = 32
         val_rate = .10
-        epochs = 10
         up_rate = np.prod(ratios)
 
         with h5py.File('data/vocoder/all_vocoder.hdf5', 'r') as f:
@@ -103,10 +108,9 @@ if __name__ == "__main__":
             losses = []
             start = time.time()
             srnn.init_states()
-            for i, case in enumerate(train_loader, 1):
+            for i, case in tqdm(enumerate(train_loader, 1)):
                 optimizer.zero_grad()
                 x, tar = case
-                print(i, end=' ', flush=True)
                 y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
                 loss = loss_criterion(y, tar)
                 loss.backward()
@@ -115,7 +119,7 @@ if __name__ == "__main__":
                 losses.append(loss.item())
                 srnn.hid_detach()
             elapsed = time.time() - start
-            print('\nEpoch: %d; Training Loss: %.3f;' % (epoch, np.mean(losses)),
+            print('Epoch: %d; Training Loss: %.3f;' % (epoch, np.mean(losses)),
                   'took %.3f sec ' % (elapsed))
 
             dev_nll = []
@@ -124,5 +128,5 @@ if __name__ == "__main__":
                 y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
                 loss = loss_criterion(y, tar)
                 dev_nll.append(loss.item())
-            print('Epoch : %d Dev Loss : %.3f' % (epoch, np.mean(dev_nll)))
+            print('Epoch: %d Dev Loss: %.3f' % (epoch, np.mean(dev_nll)))
             print('-------------------------------------------------------------')
