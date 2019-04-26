@@ -26,23 +26,38 @@ def split_by_size(tensor_2d, chunk_size, pad_val=0):
     res.append(tensor_2d[num_full * chunk_size:])
     return nn.utils.rnn.pad_sequence(res, batch_first=True, padding_value=pad_val)
 
+def bipart_dataset(complete_set, split_index):
+    return (data.Subset(complete_set, range(split_index)),
+            data.Subset(complete_set, range(split_index, len(complete_set))))
+
+def load_stateful_batch(ds, data_size, batch_size):
+    batches = StatefulSampler(data_size, batch_size)
+    return batches, DataLoader(ds, batch_sampler=batches)
+
 class StatefulSampler(Sampler):
     """Note that the actual batch size could be slightly smaller than given due to
     the residue being too small"""
-    def __init__(self, num_seq, batch_size):
-        self.num_seq = num_seq
+    def __init__(self, num_seq, batch_size, padding_val=0):
         self.B = batch_size
-        self.batch_id = split_by_size(torch.arange(self.num_seq).unsqueeze(1),
-                                      math.ceil(self.num_seq / self.B)
-                                     ).squeeze(2).transpose_(0, 1)
-        print("Split data into {0} batches, each consisting {1} training cases".format(*self.batch_id.shape))
+        self.num_seq = num_seq
+        self.num_batch = math.ceil(self.num_seq / self.B)
+        _a = torch.arange(num_seq)
+        batches = [_a[i::self.num_batch] for i in range(self.num_batch)]
+        self.padded_batch = nn.utils.rnn.pad_packed_sequence(
+            nn.utils.rnn.pack_sequence(batches),
+            batch_first=True,
+            total_length=batch_size,
+            padding_value=padding_val
+        )
+        self.batch_id = self.padded_batch[0]
+        assert self.batch_id.shape == (self.num_batch, batch_size)
+        print("Split data into {0} x {1} batches".format(*self.batch_id.shape))
 
     def __iter__(self):
         return iter(self.batch_id)
 
     def __len__(self):
-        return self.batch_id.shape[0]
-
+        return self.num_batch
 
 if __name__ == "__main__":
     if args['train_srnn']:
@@ -62,9 +77,13 @@ if __name__ == "__main__":
         all_data = data.TensorDataset(trunc_in, trunc_out)
         all_size = len(all_data)
         train_size = math.floor(all_size * (1 - val_rate))
-        train_set, val_set = data.Subset(all_data, range(train_size)), data.Subset(all_data, range(train_size, all_size))
-        train_bch, val_bch = StatefulSampler(train_size, batch_size), StatefulSampler(all_size - train_size, batch_size)
-        train_loader, val_loader = DataLoader(train_set, batch_sampler=train_bch), DataLoader(val_set, batch_sampler=val_bch)
+        train_set, val_set = bipart_dataset(all_data, train_size)
+        train_bch, train_loader = load_stateful_batch(
+            train_set, train_size, batch_size
+        )
+        val_bch, val_loader = load_stateful_batch(
+            val_set, len(val_set), batch_size
+        )
         try:
             rs, frame_size = ratios[:-1], ratios[-1]
             srnn = SampleRNN(
@@ -96,7 +115,7 @@ if __name__ == "__main__":
                 losses.append(loss.item())
                 srnn.hid_detach()
             elapsed = time.time() - start
-            print('Epoch: %d; Training Loss: %.3f;' % (epoch, np.mean(losses)),
+            print('\nEpoch: %d; Training Loss: %.3f;' % (epoch, np.mean(losses)),
                   'took %.3f sec ' % (elapsed))
 
             dev_nll = []
