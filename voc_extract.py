@@ -26,7 +26,7 @@ parser.add_argument('-v', '--vocdir', default='data/vocoder', type=str,
 
 parser.add_argument('-M', '--n_mag', default=60, type=int, dest='dim_mag')
 parser.add_argument('-R', '--n_real', default=10, type=int, dest='dim_real')
-parser.add_argument('-r', '--sample_rate', default=48000, dest='sample_rate')
+parser.add_argument('-r', '--sample_rate', type=int, default=48000, dest='sample_rate')
 parser.add_argument('-o', '--overwrite', action='store_true',
                     help="if turned on, existing files in vocdir (with same file \
                           tokens as those in wavdir) will be overwritten.")
@@ -51,7 +51,7 @@ else:
 
 if glob(outdir):
     print(outdir)
-    in_files = glob(path.join(outdir, '*.hdf'))
+    in_files = glob(path.join(outdir, '*.mag'))
     already_in = set([path.basename(file).split('.')[0] for file in in_files])
 else:
     os.mkdir(outdir)
