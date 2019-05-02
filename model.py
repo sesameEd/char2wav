@@ -10,7 +10,9 @@ def shape_ast(t, shape):
     'Expected shape ({}), got shape ({})'.format(', '.join(map(str, shape)), ', '.join(map(str, t.shape)))
 
 def init_weights(name, net):
-    suffix = name.split('.')[-1]
+    layer, suffix = name.split('.')[-2:]
+    if layer.split('_')[0] == 'ln':
+        return
     if suffix.split('_')[0] == 'bias':
         net.data.fill_(0.)
     elif suffix == 'weight_ih':
@@ -116,9 +118,33 @@ class Char2Voc(nn.modules.Module):
 
 def var(tensor):
     if torch.cuda.is_available():
-        return tensor.cuda()
+        return tensor
+        # return tensor.cuda()
     else:
         return tensor
+
+class LayerNormGRUCell(nn.GRUCell):
+    def __init__(self, input_size, hidden_size, bias=True):
+        super().__init__(input_size, hidden_size, bias)
+        self.ln_zr_ih, self.ln_zr_hh = [nn.LayerNorm(2*hidden_size) for _ in range(2)]
+        self.ln_hc_ih, self.ln_hc_hh = [nn.LayerNorm(hidden_size) for _ in range(2)]
+
+    def forward(self, input, hx=None):
+        self.check_forward_input(input)
+        if hx is None:
+            hx = torch.zeros(
+                input.size(0), self.hidden_size,
+                dtype=input.dtype, device=input.device)
+        self.check_forward_hidden(input, hx, '[0]')
+
+        wXx = F.linear(input, self.weight_ih, self.bias_ih).chunk(3, 1)
+        wXh = F.linear(hx, self.weight_hh, self.bias_hh).chunk(3, 1)
+        gates = self.ln_zr_ih(torch.cat(wXx[:2], dim=1)) + \
+                self.ln_zr_hh(torch.cat(wXh[:2], dim=1))
+        _z, _r = gates.sigmoid().chunk(2, 1)
+        cand = (self.ln_hc_ih(wXx[2]) + _r * self.ln_hc_hh(wXh[2])).tanh()
+        hy = (1 - _z) * hx + _z * cand
+        return hy
 
 class FrameLevel(nn.modules.Module):
     def __init__(self, tier_low, parent2inp, **kwargs):
@@ -133,7 +159,7 @@ class FrameLevel(nn.modules.Module):
         assert (self.S / self.R).is_integer(), print('frame size wrong')
         self.add_module('w_x', nn.Linear(int((self.S / self.R) * self.G), self.I))
         self.add_module('w_j', parent2inp)
-        self.add_module('recursive', nn.GRUCell(self.I, self.H))
+        self.add_module('recursive', LayerNormGRUCell(self.I, self.H))
         self.add_module('child', tier_low)
 
     def forward(self, x_in, hid_up):
@@ -372,14 +398,28 @@ class Char2Wav(nn.modules.Module):
         return logsm, audio_out
 
 if __name__ == "__main__":
-    test_voc = torch.rand((20, 1, 81))
-    _T, _B, _V = test_voc.shape
+    rand_voc = torch.rand((20, 1, 81))
+    _T, _B, _V = rand_voc.shape
 
-    run_srnn = True
-    run_attn = True
-    run_char2v = False
+    test_lngru = True
+    test_srnn = True
+    test_attn = True
+    test_char2v = False
 
-    if run_srnn:
+    if test_lngru:
+        _H = 30
+        lngru = LayerNormGRUCell(_V, _H)
+        with torch.no_grad():
+            x_unbind = torch.unbind(rand_voc, dim=0)
+            hid = lngru(x_unbind[0])
+            res = [hid]
+            for x in x_unbind[1:]:
+                hid = lngru(x, hid)
+                res.append(hid)
+            res = torch.stack(res)
+        assert res.shape == (_T, _B, _H)
+
+    if test_srnn:
         print('Running toy forward prop for SampleRNN...')
         srnn = SampleRNN(
             vocoder_size = 81,
@@ -394,12 +434,12 @@ if __name__ == "__main__":
             init_weights(name, param)
         srnn.init_states()
         with torch.no_grad():
-            out = srnn(test_voc)
+            out = srnn(rand_voc)
             assert out[1].shape == (_T * 16, _B, 1)
             assert out[0].shape == (_T * 16, _B, 256)
         print('Forward Propagation for SampleRNN ran without error. ')
 
-    if run_attn:
+    if test_attn:
         print('Running toy forward prop for attention implementation...')
         attion = Attn(
                 len_seq = 20,
@@ -409,6 +449,6 @@ if __name__ == "__main__":
         attion.kappa_init(1)
         test_de = torch.rand(1, 81)
         with torch.no_grad():
-            alpha = attion(test_voc[0], alpha)
+            alpha = attion(rand_voc[0], alpha)
         assert alpha.shape == (1, 20)
         print('Forward Propagation for Attn ran without error. ')

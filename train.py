@@ -19,11 +19,13 @@ parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true'
 parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--truncate_size', type=int, default=512)
+parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
 args = vars(parser.parse_args())
 
 truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
+learning_rate = args['learning_rate']
 
 def split_by_size(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -102,7 +104,7 @@ if __name__ == "__main__":
         for name, param in srnn.named_parameters():
             init_weights(name, param)
 
-        optimizer = optim.Adam(srnn.parameters(), lr=4e-4)
+        optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
         loss_criterion = nn.L1Loss()
         for epoch in range(epochs):
             losses = []
