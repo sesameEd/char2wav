@@ -127,8 +127,7 @@ if __name__ == '__main__':
         all_scaled = (all_voc - all_mean) / all_std
         with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
             f['voc_utt_idx'] = sent_idx
-            f['voc_voiced'] = voiced.reshape(-1, 1)
-            f['voc_scaled_cat'] = np.concatenate((all_scaled, f['voc_voiced']), axis=1)
+            f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced, axis=1)
             f['voc_mean'], f['voc_std'] = all_mean, all_std
             print(f['voc_mean'][-1], f['voc_std'][-1])
 

@@ -1,10 +1,11 @@
 #!/usr/bin/python3
-from model import SampleRNN, init_weights
+from model import init_by_class, shape_ast
 import torch
 import time
 import torch.optim as optim
 from torch.utils.data import Sampler, DataLoader
 import torch.utils.data as data
+import torch.nn.functional as F
 import torch.nn as nn
 import argparse
 import h5py
@@ -13,10 +14,10 @@ import math
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser(
-    "-s | --samplernn, train sample_rnn"
+    "-s | --sample_rnn, train sample_rnn"
     )
 parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true')
-parser.add_argument('--epochs', type=int, default=10)
+parser.add_argument('-e', '--epochs', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--truncate_size', type=int, default=512)
 parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
@@ -26,6 +27,31 @@ truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
+
+class MagPhaseLoss(nn.Module):
+    def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
+                 loss_type=F.l1_loss):
+        """loss_type must be a contiguous loss (instead of a categorical one),
+                     must be of nn.functional class (instead of nn.Module) """
+        super(MagPhaseLoss, self).__init__()
+        self.B = batch_size
+        self.V = vocoder_size
+        self.dim_lf0 = dim_lf0
+        self.dim_uvu = dim_uvu # dimension of voiced/unvoiced bool
+        self.loss_type = loss_type
+
+    def forward(self, input, target):
+        shape_ast(input, (self.B, -1, self.V))
+        shape_ast(target, (self.B, -1, self.V))
+        losses = self.loss_type(input, target, reduction='none').transpose(0, -1)
+        if self.dim_lf0 != -1 and self.dim_lf0 != self.V-1:
+            assert self.dim_uvu != -1 and self.dim_uvu != self.V-1
+            losses[[self.dim_lf0, -1]] = losses[[-1, self.dim_lf0]]
+        uvu = target.transpose(0, -1)[self.dim_uvu]
+        assert ((uvu == 0) + (uvu == 1)).all(), (uvu.shape, uvu[0])
+        loss_lf = torch.masked_select(losses[-1], uvu.byte())
+        loss_rest = losses[:-1].flatten()
+        return torch.cat((loss_rest, loss_lf)).mean()
 
 def split_by_size(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -71,6 +97,7 @@ class StatefulSampler(Sampler):
 
 if __name__ == "__main__":
     if args['train_srnn']:
+        from model import SampleRNN
         ratios = [1, 2, 2, 8]
         val_rate = .10
         up_rate = np.prod(ratios)
@@ -86,31 +113,39 @@ if __name__ == "__main__":
         train_size = math.floor(all_size * (1 - val_rate))
         train_set, val_set = bipart_dataset(all_data, train_size)
         train_bch, train_loader = load_stateful_batch(
-            train_set, train_size, batch_size
-        )
+            train_set, train_size, batch_size)
         val_bch, val_loader = load_stateful_batch(
-            val_set, len(val_set), batch_size
-        )
+            val_set, len(val_set), batch_size)
         try:
             rs, frame_size = ratios[:-1], ratios[-1]
             srnn = SampleRNN(
-                vocoder_size = 81,
+                vocoder_size = 82,
                 ratios = rs,
                 frame_size = frame_size,
-                batch_size = batch_size
-            )
+                batch_size = batch_size)
         except NameError:
-            srnn = SampleRNN(vocoder_size = 81, batch_size = batch_size)
-        for name, param in srnn.named_parameters():
-            init_weights(name, param)
+            srnn = SampleRNN(vocoder_size = 82, batch_size = batch_size)
+        init_by_class[srnn.__class__](srnn)
 
         optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
-        loss_criterion = nn.L1Loss()
-        for epoch in range(epochs):
+        loss_criterion = MagPhaseLoss(batch_size=batch_size)
+
+        srnn.init_states()
+        dev_loss = []
+        print('Calculating initial loss on validation set...')
+        for x, tar in val_loader:
+            y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
+            loss = loss_criterion(y, tar)
+            dev_loss.append(loss.item())
+        print('Dev loss before training: %.3f' % (np.mean(dev_loss)))
+        print('-------------------------------------------------------------')
+
+        for epoch in range(1, epochs+1):
             losses = []
             start = time.time()
             srnn.init_states()
-            for i, case in tqdm(enumerate(train_loader, 1)):
+            for i, case in enumerate(train_loader, 1):
+            # for i, case in tqdm(enumerate(train_loader, 1)):
                 optimizer.zero_grad()
                 x, tar = case
                 y = srnn(x.transpose(0, 1))[1].transpose(0, 1)

@@ -14,6 +14,7 @@ misc/test_getopt.sh
 *.wav
 *.ipynb
 *.h5
+*.hdf5
 *.txt
 *.out
 stanford-corenlp-full-2018-02-27

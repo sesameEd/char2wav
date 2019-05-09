@@ -159,7 +159,7 @@ if __name__ == "__main__":
             assert re_sent.rstrip() == all_sents[_i], \
                 print('got reconstructed sentence: ', re_sent, '\nexpected:', all_sents[_i])
 
-    with h5py.File(os.path.join(outdir, 'all_char.h5'), 'w') as f:
+    with h5py.File(os.path.join(outdir, 'all_char.hdf5'), 'w') as f:
         f.create_dataset('char_types', data=char_types)
         f.create_dataset('bndry_types', data=bndry_types)
         if title_file:

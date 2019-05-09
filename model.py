@@ -4,32 +4,61 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
+import torch.nn.init as init
 
 def shape_ast(t, shape):
-    assert len(t.shape) == len(shape) and all(x == y or y == -1 for x, y in zip(t.shape, shape)), \
-    'Expected shape ({}), got shape ({})'.format(', '.join(map(str, shape)), ', '.join(map(str, t.shape)))
+    assert len(t.shape) == len(shape) and all(
+        x == y or y == -1 for x, y in zip(t.shape, shape)), \
+        'Expected shape ({}), got shape ({})'.format(
+        ', '.join(map(str, shape)), ', '.join(map(str, t.shape)))
+
+def to_onehot(idx, batch_shape, N_cat, padded=None):
+    """if the sequences are padded, padding must be -1 (instead of 0);
+    then a matrix with padded timestamp vectors filled with all-zero will be returned
+    """
+    if isinstance(batch_shape, int):
+        batch_shape = [batch_shape]
+    elif isinstance(batch_shape, tuple):
+        batch_shape = list(batch_shape)
+    if not isinstance(batch_shape, list):
+        raise TypeError('batch_shape variable should be int, tuple or list')
+
+    if idx.shape[-1] != 1:
+        idx = idx.unsqueeze(-1)
+    assert idx.shape == (*batch_shape, 1), \
+        print('Expected index shape', (*batch_shape, 1), 'got', idx.shape)
+
+    if not padded:
+        return torch.zeros(*batch_shape, N_cat).scatter_(-1, idx, 1.)
+    else:
+        return torch.zeros(*batch_shape, N_cat+padded).scatter_(
+                    -1, idx + (torch.ones(1, 1) * padded).long(), 1.
+                ).transpose_(-1, 0)[padded:].transpose_(-1, 0)
+
+def var(tensor):
+    if torch.cuda.is_available():
+        return tensor.cuda()
+    else:
+        return tensor
 
 def init_weights(name, net):
-    layer, suffix = name.split('.')[-2:]
-    if layer.split('_')[0] == 'ln':
-        return
+    suffix = name.split('.')[-1]
     if suffix.split('_')[0] == 'bias':
         net.data.fill_(0.)
     elif suffix == 'weight_ih':
         for ih in net.chunk(3, 0):
-            torch.nn.init.xavier_uniform_(ih)
+            init.xavier_uniform_(ih)
     elif suffix == 'weight_hh':
         for hh in net.chunk(3, 0):
-            torch.nn.init.orthogonal_(hh)
+            init.orthogonal_(hh)
     elif suffix == 'weight':
-        torch.nn.init.xavier_normal_(net)
+        if 'ln' in name.split('.')[-2]:
+            return
+        init.xavier_normal_(net)
     elif suffix == 'hid0':
-        torch.nn.init.normal_(net)
+        init.normal_(net)
     else:
         print(name)
-
-def to_onehot(idx, batch, N_cat):
-    return torch.zeros(batch, N_cat).scatter_(1, idx, 1.)
 
 class Attn(nn.modules.Module):
     def __init__(self, **kwargs):
@@ -45,10 +74,11 @@ class Attn(nn.modules.Module):
         shape_ast(prev_attn, (_B, self.T))
         _B, _T = prev_attn.shape
 
-        rho, beta, kappa = self.ha2gmm(torch.cat([prev_decoded, prev_attn], dim=-1)).split(self.N_gm, dim=-1)
+        rho, beta, kappa = self.ha2gmm(torch.cat([prev_decoded, prev_attn], dim=-1)
+                                      ).split(self.N_gm, dim=-1)
         rho = torch.exp(rho).unsqueeze(dim=-1)
         beta = torch.exp(beta).unsqueeze(dim=-1)
-        self.kappa = (self.kappa + F.relu(kappa)).unsqueeze(dim=-1)
+        self.kappa = (self.kappa.squeeze() + F.relu(kappa)).unsqueeze(dim=-1)
         # what about replacing torch.exp() with ReLU???
 
         shape_ast(rho, (_B, self.N_gm, 1))
@@ -70,58 +100,62 @@ class Char2Voc(nn.modules.Module):
                           -> decoded2vocoder MLP(decoded), ReLU
         """
         super(Char2Voc, self).__init__()
-        self.Len = kwargs['len_seq']
-        self.in_size = kwargs['num_type']
-        self.embd = kwargs.get('char_embd_size', None)
-        if not (self.embd is None):
-            self.in_size = self.embd
+        self.do_maskedLM = kwargs.get('do_maskedLM', False)
+        self.C = kwargs['num_type']
+        self.T = kwargs['len_seq']
+        self.E = kwargs.get('char_embd_size', None)
+        self.I = self.E if self.E else self.C
+        self.G = self.C if self.do_maskedLM else kwargs.get('vocoder_size', 82)
+        self.padded = 2 if self.do_maskedLM else 1
+        # generated samples' size
         encoded_size = kwargs.get('encoded_size', 1024)
-        decoded_size = kwargs.get('decoded_size', 1024)
+        decoded_size = kwargs.get('decoded_size', encoded_size)
         mlp_sizes = kwargs.get('de2voc_mlp_sizes', [1024])
-        vocoder_size = kwargs.get('vocoder_size', 512)
-        mlp_i2o_sizes = list(zip([decoded_size] + mlp_sizes, mlp_sizes + [vocoder_size]))
+        mlp_i2o_sizes = list(zip([decoded_size] + mlp_sizes, mlp_sizes + [self.G]))
 
-        self.add_module('encoder', nn.LSTM(self.in_size, encoded_size, bidirectional=True))
+        # self.embedding = nn.Embedding(self.C+1, self.I, padding_idx=-1)
+        if self.E:
+            self.embedding = nn.Sequential(nn.Linear(self.C, self.E),
+                                           nn.LayerNorm([self.T, self.E]))
+        self.add_module('encoder', nn.LSTM(self.I, encoded_size, bidirectional=True))
         self.add_module('attention', Attn(num_component=3,
                                           decoded_size=decoded_size,
-                                          len_seq=self.Len))
+                                          len_seq=self.T))
         self.add_module('decoder', nn.LSTMCell(encoded_size * 2, decoded_size))
         self.de2voc_mlp = nn.ModuleList([nn.Linear(*tp) for tp in mlp_i2o_sizes])
+        self.layrnorms = nn.ModuleList([nn.LayerNorm(io[1]) for io in mlp_i2o_sizes])
 
-    def forward(self, x):
+    def forward(self, x, max_gen=100):
         """
-        :x tensor of input, pre-trained char embedding or one-hot encoding
-        :result of shape (_T, _B, vocoder_size),
+        :x  of shape (_B, _T) tensor of input, sequences of -1-padded indices
+        :result of shape (_T, _B, _G),
         """
-        shape_ast(x, (-1, self.Len, self.in_size))
-        _B, _T, _C = x.shape
-        # input = torch.zeros(x.shape)
-        encoded = self.encoder(x) # of shape (_B, _T, 2 * encoded_size)
-
+        shape_ast(x, (-1, self.T))
+        _B, _T = x.shape
+        x = to_onehot(x, batch_shape=(_B, _T), N_cat=self.C, padded=self.padded)
+        if self.E:
+            x = torch.sigmoid(self.embedding(x))
+        encoded = self.encoder(x)[0] # of shape (_B, _T, 2 * encoded_size)
         hid, cell = self.decoder(encoded[:, -1, :])
         result = []
         alpha = torch.zeros(_B, _T)
         self.attention.kappa_init(_B)
+        # masked sequences and padded values??
         idx = ((_T-1) * torch.ones(_B, 1)).long()
-        end_focus = torch.zeros(_B, _T).scattter(1, idx, 1.)
+        end_focus = torch.zeros(_B, _T).scatter_(-1, idx, 1.)
 
-        while not alpha.allclose(end_focus):
+        while not alpha.allclose(end_focus) and len(result) < max_gen:
             alpha = self.attention(hid, alpha)
-            hid, cell= self.decoder(alpha.unsqueeze(dim=-1) * encoded, hid, cell)
+            inp = (alpha.unsqueeze(-1) * encoded).sum(1)
+            hid, cell = self.decoder(inp, (hid, cell))
             out = hid
-            for fc in self.de2voc_mlp[:-1]:
-                out = F.relu(fc(out))
-            out = self.de2voc_mlp[-1](out)
+            for fc, ln in zip(self.de2voc_mlp, self.layrnorms):
+                out = ln(fc(out))
+            if self.do_maskedLM:
+                out = F.log_softmax(out, dim=-1)
             result.append(out)
-        result = torch.stack(result).transpose(0, 1)
+        result = torch.stack(result)
         return result
-
-def var(tensor):
-    if torch.cuda.is_available():
-        return tensor
-        # return tensor.cuda()
-    else:
-        return tensor
 
 class LayerNormGRUCell(nn.GRUCell):
     def __init__(self, input_size, hidden_size, bias=True):
@@ -266,33 +300,51 @@ class VocoderLevel(nn.modules.Module):
             x_out.append(inp)
         return [], list(x_out)
 
+class SampleMagPhase(nn.modules.Module):
+    def __init__(self, parent2inp, **kwargs):
+        super(SampleMagPhase, self).__init__()
+        self.sample_size = kwargs.get('frame_size', 8)
+        self.I = kwargs.get('gen_in_size', 256) # dimension of input vector
+        self.V = kwargs.get('vocoder_size', 82)
+        mlp_sizes = [self.I] + kwargs.get('mlp_sizes', [1024,512]) + [self.V]
+        self.add_module('w_x', nn.Linear(self.sample_size * self.V, self.I))
+        self.add_module('w_j', parent2inp)
+        self.mlp = nn.ModuleList([nn.Linear(mlp_sizes[i], mlp_sizes[i+1])
+                                  for i in range(len(mlp_sizes)-1)])
+        self.layernorms = nn.ModuleList([nn.LayerNorm(mlp_sizes[i])
+                                         for i in range(1, len(mlp_sizes))])
+        # self.add_module('conv1', nn.Conv1d(in_channels=1, out_channels=6, kernel_size=10, stride=5))
+
+    def forward(self, x, hid_up):
+        shape_ast(x, (-1, self.sample_size * self.V))
+        _B, _S  = x.shape
+        shape_ast(hid_up, (_B, -1))
+        x_out = deque(x.split(self.V, dim=1), maxlen=self.sample_size)
+        c_j = self.w_j(hid_up).split(self.I, dim=-1)
+        for _j in range(self.sample_size):
+            inp = torch.sigmoid(self.w_x(torch.cat(list(x_out), dim=-1)) + c_j[_j])
+            for fc, ln in zip(self.mlp, self.layernorms):
+                inp = ln(fc(inp))
+            inp[:, -2] = torch.sigmoid(inp[:, -2]) # extra dim for voicedness prediction
+            x_out.append(inp)
+        return [], list(x_out)
+
 
 class SampleRNN(nn.modules.Module):
     def __init__(self, **kwargs):
         super(SampleRNN, self).__init__()
-        self.vocoder_size = kwargs['vocoder_size']
         self.B = kwargs['batch_size']
         self.ratios = kwargs.get('ratios', [1,2,2])
         self.input_sizes = kwargs.get('input_sizes', [256, 256, 256])
         self.gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024, 1024])
         self.gen_sample = kwargs.get('sample_level', False)
+        self.vocoder_size = kwargs['vocoder_size']
         self.gen_size = 1 if self.gen_sample else self.vocoder_size
-        """default args for SampleLevel :
-                frame_size  -> 8
-                gen_in_size -> 256
-                mlp_sizes   -> [1024, 1024, 256]
-                audio_embd  -> 0
-                bit_depth   -> 8"""
-        """default args for VocoderLevel:
-                frame_size  -> 8
-                gen_in_size -> 256
-                mlp_sizes   -> [1024, 512]
-                vocoder_size-> 81
-                bit_depth   -> 8"""
         if (len(self.ratios) != len(self.input_sizes) or
             len(self.input_sizes) != len(self.gru_hid_sizes)):
             print('Wrong size for the lists of params, {0} frame sizes,'.format(len(self.ratios)),
-                  '{0} input sizes, and {1} recurrent sizes'.format(len(self.input_sizes), len(self.gru_hid_sizes)))
+                  '{0} input sizes, and {1} recurrent sizes'.format(
+                      len(self.input_sizes), len(self.gru_hid_sizes)))
         self.n_tiers = len(self.ratios) + 1
         self.FS = self.ratios + [kwargs.get('frame_size', 8)]
         self.samp_sizes = list(np.cumprod(self.FS[::-1]))[:0:-1]
@@ -312,12 +364,25 @@ class SampleRNN(nn.modules.Module):
                             'gen_size'],
                            tp))
                   for tp in params]
-        wj_prm = zip(up_sizes, self.FS, self.input_sizes + [kwargs.get('gen_in_size', 256)]) # 0, .., self.n_tiers-1
+        wj_prm = zip(up_sizes, self.FS, self.input_sizes + [kwargs.get('gen_in_size', 256)])
+        # 0, .., self.n_tiers-1
         wj_prm = [(tp[0], tp[1]*tp[2]) for tp in wj_prm]
         if self.gen_sample:
+            """default args for SampleLevel :
+                frame_size  -> 8
+                gen_in_size -> 256
+                mlp_sizes   -> [1024, 1024, 256]
+                audio_embd  -> 0
+                bit_depth   -> 8"""
             tier = SampleLevel(nn.Linear(*wj_prm[-1]), **kwargs)
         else:
-            tier = VocoderLevel(nn.Linear(*wj_prm[-1]), **kwargs)
+            """default args for VocoderLevel:
+                frame_size  -> 8
+                gen_in_size -> 256
+                mlp_sizes   -> [1024, 512]
+                vocoder_size-> 81
+                bit_depth   -> 8"""
+            tier = SampleMagPhase(nn.Linear(*wj_prm[-1]), **kwargs)
         for k in reversed(range(self.n_tiers-1)):
             w_j = nn.Linear(*wj_prm[k])
             tier = FrameLevel(tier, w_j, **params[k])
@@ -397,6 +462,65 @@ class Char2Wav(nn.modules.Module):
         logsm, audio_out = self.samplernn(voc_pred)
         return logsm, audio_out
 
+def init_Linear(net):
+    init.zeros_(net.bias)
+    init.xavier_normal_(net.weight)
+
+def init_recurrent(weight, num_chunks, initializer):
+    for _w in weight.chunk(num_chunks, 0):
+        initializer(_w)
+
+def init_ModuleList(m_list):
+    for layer in m_list:
+        init_by_class[layer.__class__](layer)
+
+def init_Module(net):
+    for layer in net.children():
+        init_by_class[layer.__class__](layer)
+
+def init_GRU(net):
+    init_recurrent(net.weight_ih, num_chunks=3,
+                   initializer=init.xavier_uniform_)
+    init_recurrent(net.weight_hh, num_chunks=3,
+                   initializer=init.orthogonal_)
+
+def init_LSTM(lstm):
+    for n, p in lstm.named_parameters():
+        if 'bias' in n:
+            init.zeros_(p)
+        if 'weight_ih' in n:
+            init_recurrent(p, 4, init.xavier_uniform_)
+        if 'weight_hh' in n:
+            init_recurrent(p, 4, init.orthogonal_)
+
+def init_FrameLevel(net):
+    init.normal_(net.hid0)
+    init_Module(net)
+
+def init_LayerNormGRUCell(net):
+    init_GRU(net)
+    init_Module(net)
+
+def init_LayerNorm(net):
+    return
+
+global init_by_class
+init_by_class = {
+    nn.Linear : init_Linear,
+    nn.LayerNorm : init_LayerNorm,
+    nn.ModuleList : init_ModuleList,
+    nn.LSTM : init_LSTM,
+    nn.LSTMCell : init_LSTM,
+    LayerNormGRUCell : init_LayerNormGRUCell,
+    FrameLevel : init_FrameLevel,
+    SampleLevel : init_Module,
+    SampleMagPhase : init_Module,
+    Attn : init_Module,
+    Char2Voc : init_Module,
+    SampleRNN : init_Module,
+    nn.Sequential : init_Module
+}
+
 if __name__ == "__main__":
     rand_voc = torch.rand((20, 1, 81))
     _T, _B, _V = rand_voc.shape
@@ -404,7 +528,7 @@ if __name__ == "__main__":
     test_lngru = True
     test_srnn = True
     test_attn = True
-    test_char2v = False
+    test_char2v = True
 
     if test_lngru:
         _H = 30
@@ -452,3 +576,20 @@ if __name__ == "__main__":
             alpha = attion(rand_voc[0], alpha)
         assert alpha.shape == (1, 20)
         print('Forward Propagation for Attn ran without error. ')
+
+    if test_char2v:
+        test_char_seq = torch.multinomial(rand_voc.squeeze(), 50, replacement=True) - 2.
+        _B, _T = test_char_seq.shape
+        _C = _V - 2
+        print('Running toy forward prop for Char2Voc...')
+        char2v = Char2Voc(
+            len_seq = _T,
+            num_type = _C,
+            char_embd_size = 100,
+            do_maskedLM = True
+        )
+        init_by_class[char2v.__class__](char2v)
+        with torch.no_grad():
+            decoded = char2v(test_char_seq, max_gen=50)
+        assert decoded.shape == (_T, _B, _C)
+        print('Char2Voc encoder-decoder with Attn ran without error. ')
