@@ -144,8 +144,8 @@ if __name__ == "__main__":
             losses = []
             start = time.time()
             srnn.init_states()
-            for i, case in enumerate(train_loader, 1):
-            # for i, case in tqdm(enumerate(train_loader, 1)):
+            # for i, case in enumerate(train_loader, 1):
+            for i, case in tqdm(enumerate(train_loader, 1)):
                 optimizer.zero_grad()
                 x, tar = case
                 y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
