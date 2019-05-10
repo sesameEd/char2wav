@@ -178,6 +178,7 @@ if __name__ == "__main__":
                 dev_nll.append(loss.item())
             print('Epoch: %d Dev Loss: %.3f' % (epoch, np.mean(dev_nll)))
             print('-------------------------------------------------------------')
+        torch.save(srnn.state_dict(), 'data/model.torch')
 
         voc_utt_idx = voc_dic['voc_utt_idx']
         voc_mean, voc_std = voc_dic['voc_mean'], voc_dic['voc_std']
