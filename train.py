@@ -167,8 +167,8 @@ if __name__ == "__main__":
                 losses.append(loss.item())
                 srnn.hid_detach()
             elapsed = time.time() - start
-            print('Epoch: %d; Training Loss: %.3f;' % (epoch, np.mean(losses)),
-                  'took %.3f sec ' % (elapsed))
+            print('Epoch: %d Training Loss: %.3f;' % (epoch, np.mean(losses)), end='| ')
+                  # 'took %.3f sec ' % (elapsed))
 
             dev_nll = []
             for i, case in enumerate(val_loader, 1):
@@ -203,8 +203,8 @@ if __name__ == "__main__":
             out_split = torch.split(out_magphase, [60, 10, 10, 1], dim=1)
             for gt, out, ft in zip(gt_split, out_split, ['mag', 'real', 'imag', 'lf0']):
                 write_binfile(gt, os.path.join(synth_dir,
-                                               'ground_truth_{:03d}.{}'.format(i, ft)))
+                                               'ground_truth_{:05d}.{}'.format(i, ft)))
                 write_binfile(out, os.path.join(synth_dir,
-                                                'srnn_{:03d}.{}'.format(i, ft)))
+                                                'srnn_{:05d}.{}'.format(i, ft)))
         print('synthesizing voices from generated vocoder features.')
         os.system('./voc_extract.py -m  synth -v data/synth_voc/ -w data/wavs_syn/')
