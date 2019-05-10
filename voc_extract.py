@@ -3,8 +3,8 @@ import magphase as mp
 import libutils as lu
 import argparse
 from glob import glob
-from os import path
 import os
+from os import path
 import numpy as np
 import h5py
 # from scipy.interpolate import interp1d
@@ -47,15 +47,15 @@ dim_f0 = 1
 if mode == "extract":
     indir = args['wavdir']
     outdir = args['vocdir']
+    in_files = glob(path.join(outdir, '*.mag'))
 elif mode == "synth":
     indir = args['vocdir']
     outdir = args['wavdir']
+    in_files = glob(path.join(outdir, '*.wav'))
 else:
     raise ValueError("mode must be one of the two below: 'synth' or 'extract'")
 
 if glob(outdir):
-    print(outdir)
-    in_files = glob(path.join(outdir, '*.mag'))
     already_in = set([path.basename(file).split('.')[0] for file in in_files])
 else:
     os.mkdir(outdir)
@@ -133,6 +133,8 @@ if __name__ == '__main__':
 
 
     if mode == "synth":
+        # print(file_tkn)
+        print('synthesizing from dir {}, saving to dir {}'.format(indir, outdir))
         if do_parallelize:
             lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
                                  indir,

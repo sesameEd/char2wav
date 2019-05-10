@@ -397,8 +397,11 @@ class SampleRNN(nn.modules.Module):
             if not (generates vocoder features):
                 [] and vocoders, of shape (_T * pi(FS), _B, _V)
         """
-        shape_ast(vocoder, (-1, self.B, self.vocoder_size))
+        shape_ast(vocoder, (-1, -1, self.vocoder_size))
         _T, _B, _V = vocoder.shape
+        if _B != self.B:
+            print('Ignoring batch size mismatch: expected {}, got {}'.format(
+                self.B, vocoder.shape[1]))
         logsm, x_out = [], []
         vocoder_single = torch.unbind(vocoder, dim=0)
         for voc in vocoder_single:

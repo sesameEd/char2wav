@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 import math
 from tqdm import tqdm
+import os
 
 parser = argparse.ArgumentParser(
     "-s | --sample_rnn, train sample_rnn"
@@ -21,12 +22,15 @@ parser.add_argument('-e', '--epochs', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--truncate_size', type=int, default=512)
 parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
+parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/')
 args = vars(parser.parse_args())
 
 truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
+test_size = 5
+synth_dir = args['voc_synth_dir']
 
 class MagPhaseLoss(nn.Module):
     def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
@@ -95,6 +99,13 @@ class StatefulSampler(Sampler):
     def __len__(self):
         return self.num_batch
 
+def write_binfile(m_data, filename):
+    m_data = np.array(m_data, 'float32') # Ensuring float32 output
+    fid = open(filename, 'wb')
+    m_data.tofile(fid)
+    fid.close()
+    return
+
 if __name__ == "__main__":
     if args['train_srnn']:
         from model import SampleRNN
@@ -104,7 +115,7 @@ if __name__ == "__main__":
 
         with h5py.File('data/vocoder/all_vocoder.hdf5', 'r') as f:
             voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
-        input_data = voc_dic['voc_scaled_cat'][::32, :]
+        input_data = voc_dic['voc_scaled_cat'][::up_rate, :]
         trunc_out = split_by_size(voc_dic['voc_scaled_cat'], truncate_size)
         trunc_in = split_by_size(input_data, truncate_size // up_rate)
         assert trunc_in.shape[0] == trunc_out.shape[0]
@@ -146,10 +157,10 @@ if __name__ == "__main__":
             srnn.init_states()
             # for i, case in enumerate(train_loader, 1):
             for i, case in tqdm(enumerate(train_loader, 1)):
-                optimizer.zero_grad()
                 x, tar = case
                 y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
                 loss = loss_criterion(y, tar)
+                optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(srnn.parameters(), 5.)
                 optimizer.step()
@@ -167,3 +178,33 @@ if __name__ == "__main__":
                 dev_nll.append(loss.item())
             print('Epoch: %d Dev Loss: %.3f' % (epoch, np.mean(dev_nll)))
             print('-------------------------------------------------------------')
+
+        voc_utt_idx = voc_dic['voc_utt_idx']
+        voc_mean, voc_std = voc_dic['voc_mean'], voc_dic['voc_std']
+        test_id = torch.randint(len(voc_utt_idx) - 1, (test_size,))
+        srnn.B = 1
+        from glob import glob
+        if not glob(synth_dir):
+            os.mkdir(synth_dir)
+        for i in test_id:
+            srnn.init_states()
+            gt_vocoder = voc_dic['voc_scaled_cat'][voc_utt_idx[i]:voc_utt_idx[i+1]]
+            gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
+            assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
+                    'wrong dimension for voicedness '
+            gt_magphase[:, -1][(1 - gt_vocoder[:, -2]).byte()] = -1.0e+10
+            gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
+            inp = gt_vocoder[::up_rate, :].unsqueeze(0)
+            with torch.no_grad():
+                out_vocoder = srnn(inp.transpose(0, 1))[1].transpose(0, 1).squeeze()
+            out_voiced = torch.bernoulli(out_vocoder[:, -2])
+            out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
+            out_magphase[:, -1][(1 - out_voiced).byte()] = -1.0e+10
+            out_split = torch.split(out_magphase, [60, 10, 10, 1], dim=1)
+            for gt, out, ft in zip(gt_split, out_split, ['mag', 'real', 'imag', 'lf0']):
+                write_binfile(gt, os.path.join(synth_dir,
+                                               'ground_truth_{:03d}.{}'.format(i, ft)))
+                write_binfile(out, os.path.join(synth_dir,
+                                                'srnn_{:03d}.{}'.format(i, ft)))
+        print('synthesizing voices from generated vocoder features.')
+        os.system('./voc_extract.py -m  synth -v data/synth_voc/ -w data/wavs_syn/')
