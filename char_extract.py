@@ -16,7 +16,7 @@ parser.add_argument('-d', '--dict', default='data/title/vocab.freq', type=str,
                     help='the tsv file storing all character types (with counts)')
 parser.add_argument('-t', '--titles', default='data/title/title.freq', type=str,
                     help='the tsv file storing the different titles (with counts)')
-parser.add_argument('-o', '--outdir', type=str, help='the directory to save output .h5 file, defaults to ./data')
+parser.add_argument('-o', '--outdir', type=str, help='the directory to save output .hdf5 file, defaults to ./data')
 args = vars(parser.parse_args())
 do_align = True
 boundary_signs = dict(zip(['BOS', 'BOW', 'EOS', 'EOW'], map(str, range(4))))

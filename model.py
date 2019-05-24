@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from collections import deque
 import torch.nn.init as init
 
-def shape_ast(t, shape):
+def shape_assert(t, shape):
     assert len(t.shape) == len(shape) and all(
         x == y or y == -1 for x, y in zip(t.shape, shape)), \
         'Expected shape ({}), got shape ({})'.format(
@@ -69,9 +69,9 @@ class Attn(nn.modules.Module):
         self.ha2gmm = nn.Linear(self.decoded_size + self.T, self.N_gm * 3)
 
     def forward(self, prev_decoded, prev_attn):
-        shape_ast(prev_decoded, (-1, self.decoded_size))
+        shape_assert(prev_decoded, (-1, self.decoded_size))
         _B, _H = prev_decoded.shape
-        shape_ast(prev_attn, (_B, self.T))
+        shape_assert(prev_attn, (_B, self.T))
         _B, _T = prev_attn.shape
 
         rho, beta, kappa = self.ha2gmm(torch.cat([prev_decoded, prev_attn], dim=-1)
@@ -81,7 +81,7 @@ class Attn(nn.modules.Module):
         self.kappa = (self.kappa.squeeze() + F.relu(kappa)).unsqueeze(dim=-1)
         # what about replacing torch.exp() with ReLU???
 
-        shape_ast(rho, (_B, self.N_gm, 1))
+        shape_assert(rho, (_B, self.N_gm, 1))
         phi = (rho * torch.exp(
                      -beta * (self.kappa - torch.arange(float(_T)).view(1, 1, _T)) ** 2)
               ).sum(dim=1)
@@ -130,7 +130,7 @@ class Char2Voc(nn.modules.Module):
         :x  of shape (_B, _T) tensor of input, sequences of -1-padded indices
         :result of shape (_T, _B, _G),
         """
-        shape_ast(x, (-1, self.T))
+        shape_assert(x, (-1, self.T))
         _B, _T = x.shape
         x = to_onehot(x, batch_shape=(_B, _T), N_cat=self.C, padded=self.padded)
         if self.E:
@@ -181,7 +181,7 @@ class LayerNormGRUCell(nn.GRUCell):
         return hy
 
 class FrameLevel(nn.modules.Module):
-    def __init__(self, tier_low, parent2inp, **kwargs):
+    def __init__(self, tier_low, parent2inp=None, **kwargs):
         super(FrameLevel, self).__init__()
         self.R = kwargs['ratio']
         self.S = kwargs['sample_size']
@@ -192,15 +192,22 @@ class FrameLevel(nn.modules.Module):
         self.hid0 = nn.Parameter(torch.rand(1, self.H), requires_grad=True)
         assert (self.S / self.R).is_integer(), print('frame size wrong')
         self.add_module('w_x', nn.Linear(int((self.S / self.R) * self.G), self.I))
-        self.add_module('w_j', parent2inp)
+        if not parent2inp is None:
+            self.add_module('w_j', parent2inp)
         self.add_module('recursive', LayerNormGRUCell(self.I, self.H))
         self.add_module('child', tier_low)
 
     def forward(self, x_in, hid_up):
-        shape_ast(x_in, (-1, self.S * self.G))
+        """
+        x_in: list of self.S tensors, each of shape (_B, self.G)
+        """
+        shape_assert(x_in, (-1, self.S * self.G))
         _B, _SG = x_in.shape
-        shape_ast(hid_up, (_B, -1))
-        c_j = self.w_j(hid_up).split(self.I, dim=-1)
+        shape_assert(hid_up, (_B, -1))
+        if (hid_up == 0).all():
+            c_j = [torch.zeros(_B, self.I) for _ in range(self.R)]
+        else:
+            c_j = self.w_j(hid_up).split(self.I, dim=-1)
         x_in = deque(x_in.chunk(self.R, dim=-1), maxlen=self.R)
         # shape of each element: (B, S/R * G)
         logsm, x_out = [], []
@@ -246,9 +253,9 @@ class SampleLevel(nn.modules.Module):
         self.add_module('h2s', nn.Linear(mlp_sizes[-1], 2 ** self.D_bt)) # or a 8-way sigmoid?
 
     def forward(self, x, hid_up):
-        shape_ast(x, (-1, self.S))
+        shape_assert(x, (-1, self.S))
         _B, _S = x.shape
-        shape_ast(hid_up, (_B, -1))
+        shape_assert(hid_up, (_B, -1))
         x_out = deque(x.split(1, dim=1), maxlen=_S)
         c_j = self.w_j(hid_up).split(self.I, dim=-1)
         logsm = []
@@ -271,7 +278,7 @@ class SampleLevel(nn.modules.Module):
         return logsm, list(x_out)
 
     def x2vec(self, x, batch):
-        shape_ast(x, (batch, 1))
+        shape_assert(x, (batch, 1))
         return self.embd(to_onehot(x, batch, 2 ** self.D_bt))
 
 
@@ -288,9 +295,9 @@ class VocoderLevel(nn.modules.Module):
         # self.add_module('conv1', nn.Conv1d(in_channels=1, out_channels=6, kernel_size=10, stride=5))
 
     def forward(self, x, hid_up):
-        shape_ast(x, (-1, self.sample_size * self.vocoder_size))
+        shape_assert(x, (-1, self.sample_size * self.vocoder_size))
         _B, _S  = x.shape
-        shape_ast(hid_up, (_B, -1))
+        shape_assert(hid_up, (_B, -1))
         x_out = deque(x.split(self.vocoder_size, dim=1), maxlen=self.sample_size)
         c_j = self.w_j(hid_up).split(self.I, dim=-1)
         for _j in range(self.sample_size):
@@ -316,9 +323,9 @@ class SampleMagPhase(nn.modules.Module):
         # self.add_module('conv1', nn.Conv1d(in_channels=1, out_channels=6, kernel_size=10, stride=5))
 
     def forward(self, x, hid_up):
-        shape_ast(x, (-1, self.sample_size * self.V))
+        shape_assert(x, (-1, self.sample_size * self.V))
         _B, _S  = x.shape
-        shape_ast(hid_up, (_B, -1))
+        shape_assert(hid_up, (_B, -1))
         x_out = deque(x.split(self.V, dim=1), maxlen=self.sample_size)
         c_j = self.w_j(hid_up).split(self.I, dim=-1)
         for _j in range(self.sample_size):
@@ -333,13 +340,16 @@ class SampleMagPhase(nn.modules.Module):
 class SampleRNN(nn.modules.Module):
     def __init__(self, **kwargs):
         super(SampleRNN, self).__init__()
-        self.B = kwargs['batch_size']
-        self.ratios = kwargs.get('ratios', [1,2,2])
-        self.input_sizes = kwargs.get('input_sizes', [256, 256, 256])
-        self.gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024, 1024])
+        # self.B = kwargs['batch_size']
+        self.B = -1
+        self.dropout = kwargs.get('drop_out', .3)
+        self.ratios = kwargs.get('ratios', [2,2])
+        self.input_sizes = kwargs.get('input_sizes', [256, 256])
+        self.gru_hid_sizes = kwargs.get('gru_hid_sizes', [1024, 1024])
         self.gen_sample = kwargs.get('sample_level', False)
-        self.vocoder_size = kwargs['vocoder_size']
-        self.gen_size = 1 if self.gen_sample else self.vocoder_size
+        # self.vocoder_size = kwargs['vocoder_size']
+        # self.gen_size = 1 if self.gen_sample else self.vocoder_size
+        self.gen_size = 1 if self.gen_sample else kwargs['vocoder_size']
         if (len(self.ratios) != len(self.input_sizes) or
             len(self.input_sizes) != len(self.gru_hid_sizes)):
             print('Wrong size for the lists of params, {0} frame sizes,'.format(len(self.ratios)),
@@ -348,25 +358,24 @@ class SampleRNN(nn.modules.Module):
         self.n_tiers = len(self.ratios) + 1
         self.FS = self.ratios + [kwargs.get('frame_size', 8)]
         self.samp_sizes = list(np.cumprod(self.FS[::-1]))[:0:-1]
-        up_sizes = [self.vocoder_size] + self.gru_hid_sizes
+        self.hid_up_size = kwargs.get('hid_up_size', None)
+        up_sizes = [self.hid_up_size] + self.gru_hid_sizes
 
-        params = zip(
-            self.ratios,
-            self.input_sizes,
-            self.gru_hid_sizes,
-            self.samp_sizes,
-            [self.gen_size] * len(self.ratios)
-        )
+        params = zip(self.ratios,
+                     self.input_sizes,
+                     self.gru_hid_sizes,
+                     self.samp_sizes,
+                     [self.gen_size] * len(self.ratios),
+                     [self.dropout] * len(self.ratios))
         params = [dict(zip(['ratio',
                             'input_size',
                             'hid_size',
                             'sample_size',
-                            'gen_size'],
-                           tp))
-                  for tp in params]
+                            'gen_size',
+                            'drop_out'], tp)) for tp in params]
         wj_prm = zip(up_sizes, self.FS, self.input_sizes + [kwargs.get('gen_in_size', 256)])
-        # 0, .., self.n_tiers-1
         wj_prm = [(tp[0], tp[1]*tp[2]) for tp in wj_prm]
+        # 0, .., self.n_tiers-1
         if self.gen_sample:
             """default args for SampleLevel :
                 frame_size  -> 8
@@ -383,29 +392,42 @@ class SampleRNN(nn.modules.Module):
                 vocoder_size-> 81
                 bit_depth   -> 8"""
             tier = SampleMagPhase(nn.Linear(*wj_prm[-1]), **kwargs)
+        # assert len(wj_prm) == len(params), (wj_prm, params, self.n_tiers)
         for k in reversed(range(self.n_tiers-1)):
-            w_j = nn.Linear(*wj_prm[k])
-            tier = FrameLevel(tier, w_j, **params[k])
+            if wj_prm[k][0] is None:
+                tier = FrameLevel(tier, parent2inp=None, **params[k])
+            else:
+                tier = FrameLevel(tier, nn.Linear(*wj_prm[k]), **params[k])
         self.add_module('srnn', tier)
 
-    def forward(self, vocoder):
+    def forward(self, x_in=None, hid_up=None, tf_rate=0):
         """
-        :input array of vocoders, of shape (_T, _B, _V)
+        :x_in of desired output shape (_T * pi(FS), _B, _V), it can be an all-zero tensor
+            if tf_rate=0, but it's mandatory
+        :hid_up of shape (_T, _B, _V), can be None
+        :tf_rate, the rate of drawing
         :output
             if self.gen_sample (generates raw waves):
                 log prob and prob, of shape (_T * pi(FS), _B, 2 ** depth)
             if not (generates vocoder features):
                 [] and vocoders, of shape (_T * pi(FS), _B, _V)
         """
-        shape_ast(vocoder, (-1, -1, self.vocoder_size))
-        _T, _B, _V = vocoder.shape
-        if _B != self.B:
-            print('Ignoring batch size mismatch: expected {}, got {}'.format(
-                self.B, vocoder.shape[1]))
+        shape_assert(x_in, (-1, self.B, self.gen_size))
+        _, _B, _V = x_in.shape
+        gen_steps = torch.split(x_in, int(self.samp_sizes[0]), dim=0)
+        if hid_up is None:
+            assert self.hid_up_size is None, 'expected no hid_up, no hid_up_size was set! '
+            hid_up = torch.zeros(len(gen_steps), 1)
+        else:
+            shape_assert(hid_up, (len(gen_steps), _B, self.hid_up_size))
+        hu_unbind = torch.unbind(hid_up, dim=0)
+        assert 0 <= tf_rate and 1 >= tf_rate, 'teacher forcing must be between 0 and 1!'
         logsm, x_out = [], []
-        vocoder_single = torch.unbind(vocoder, dim=0)
-        for voc in vocoder_single:
-            logsm_pre, x_pre = self.srnn(self.x_in, voc)
+        for hu, x in zip(hu_unbind, gen_steps):
+            # mask = torch.bernoulli(tf_rate * torch.ones(self.samp_sizes[0]))
+            mask = torch.bernoulli(tf_rate * torch.ones(x.shape[0]))
+            self.x_in.view(_B, -1, _V).transpose(0, 1)[mask.nonzero().flatten()] = x[mask.byte()]
+            logsm_pre, x_pre = self.srnn(self.x_in, hu)
             self.x_in = torch.cat(x_pre, dim=-1)
             x_out += x_pre
             logsm += logsm_pre
@@ -414,9 +436,12 @@ class SampleRNN(nn.modules.Module):
             logsm = torch.stack(logsm, dim=0)
         return logsm, x_out
 
-    def init_states(self):
+    def init_states(self, batch_size):
+        self.B = batch_size
         self.srnn.hid_init(self.B)
+        # self.x_in = var(torch.zeros(self.B, self.samp_sizes[0] * self.gen_size))
         self.x_in = var(torch.zeros(self.B, self.samp_sizes[0] * self.gen_size))
+        self.x_in.view(self.B, self.samp_sizes[0], self.gen_size)[:, :, :60].normal_(mean=-1.2, std=.5)
 
     def hid_detach(self):
         self.x_in = var(self.x_in.data)
@@ -535,7 +560,9 @@ if __name__ == "__main__":
 
     if test_lngru:
         _H = 30
+        print('Running toy forward prop for LayerNormGRUCell...')
         lngru = LayerNormGRUCell(_V, _H)
+        init_by_class[lngru.__class__](lngru)
         with torch.no_grad():
             x_unbind = torch.unbind(rand_voc, dim=0)
             hid = lngru(x_unbind[0])
@@ -545,33 +572,48 @@ if __name__ == "__main__":
                 res.append(hid)
             res = torch.stack(res)
         assert res.shape == (_T, _B, _H)
+        print('Forward Propagation for LayerNormGRUCell ran without error. ')
 
     if test_srnn:
         print('Running toy forward prop for SampleRNN...')
-        srnn = SampleRNN(
-            vocoder_size = 81,
-            ratios = [2],
-            input_sizes = [512],
-            gru_hid_sizes = [1024],
-            sample_level = True,
-            audio_embd = 20,
-            batch_size = _B
+        gen_sample = False
+        if gen_sample:
+            srnn = SampleRNN(
+                vocoder_size = _V,
+                ratios = [2],
+                input_sizes = [512],
+                gru_hid_sizes = [1024],
+                sample_level = True,
+                hid_up_size = _V,
+                audio_embd = 20
             )
-        for name, param in srnn.named_parameters():
-            init_weights(name, param)
-        srnn.init_states()
+            tar_out = torch.zeros(_T * 16, _B, _V)
+        else:
+            srnn = SampleRNN(
+                ratios = [2],
+                input_sizes = [512],
+                hid_up_size = _V,
+                gru_hid_sizes = [1024]
+            )
+            tar_out = torch.zeros(_T * 16, _B, 1)
+        init_by_class[srnn.__class__](srnn)
+        srnn.init_states(_B)
         with torch.no_grad():
             out = srnn(rand_voc)
+        if gen_sample:
             assert out[1].shape == (_T * 16, _B, 1)
             assert out[0].shape == (_T * 16, _B, 256)
+        else:
+            assert out[1].shape == (_T * 16, _B, _V)
         print('Forward Propagation for SampleRNN ran without error. ')
 
     if test_attn:
         print('Running toy forward prop for attention implementation...')
         attion = Attn(
-                len_seq = 20,
-                decoded_size = 81
-            )
+            len_seq = _T,
+            decoded_size = _V
+        )
+        init_by_class[attion.__class__](attion)
         alpha = torch.zeros(1, 20)
         attion.kappa_init(1)
         test_de = torch.rand(1, 81)

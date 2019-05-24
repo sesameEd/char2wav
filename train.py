@@ -1,23 +1,23 @@
 #!/usr/bin/python3
-from model import init_by_class, shape_ast
+import argparse
+import h5py
+import math
+import numpy as np
+import os
 import torch
 import time
 import torch.optim as optim
-from torch.utils.data import Sampler, DataLoader
 import torch.utils.data as data
-import torch.nn.functional as F
 import torch.nn as nn
-import argparse
-import h5py
-import numpy as np
-import math
+import torch.nn.functional as F
+from model import init_by_class, shape_assert
 from tqdm import tqdm
-import os
 
 parser = argparse.ArgumentParser(
     "-s | --sample_rnn, train sample_rnn"
     )
 parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true')
+parser.add_argument('--synth', action='store_true')
 parser.add_argument('-e', '--epochs', type=int, default=10)
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--truncate_size', type=int, default=512)
@@ -31,6 +31,7 @@ epochs = args['epochs']
 learning_rate = args['learning_rate']
 test_size = 5
 synth_dir = args['voc_synth_dir']
+model_path = 'data/model.torch'
 
 class MagPhaseLoss(nn.Module):
     def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
@@ -45,8 +46,8 @@ class MagPhaseLoss(nn.Module):
         self.loss_type = loss_type
 
     def forward(self, input, target):
-        shape_ast(input, (self.B, -1, self.V))
-        shape_ast(target, (self.B, -1, self.V))
+        shape_assert(input, (self.B, -1, self.V))
+        shape_assert(target, (self.B, -1, self.V))
         losses = self.loss_type(input, target, reduction='none').transpose(0, -1)
         if self.dim_lf0 != -1 and self.dim_lf0 != self.V-1:
             assert self.dim_uvu != -1 and self.dim_uvu != self.V-1
@@ -57,13 +58,10 @@ class MagPhaseLoss(nn.Module):
         loss_rest = losses[:-1].flatten()
         return torch.cat((loss_rest, loss_lf)).mean()
 
-def split_by_size(tensor_2d, chunk_size, pad_val=0):
+def split_2d(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
     when last sequence shorter than split size"""
-    num_full = tensor_2d.shape[0] // chunk_size
-    res = tensor_2d[:num_full * chunk_size].view(num_full, chunk_size, -1)
-    res = list(torch.unbind(res, 0))
-    res.append(tensor_2d[num_full * chunk_size:])
+    res = torch.split(tensor_2d, chunk_size, dim=0)
     return nn.utils.rnn.pad_sequence(res, batch_first=True, padding_value=pad_val)
 
 def bipart_dataset(complete_set, split_index):
@@ -72,9 +70,9 @@ def bipart_dataset(complete_set, split_index):
 
 def load_stateful_batch(ds, data_size, batch_size):
     batches = StatefulSampler(data_size, batch_size)
-    return batches, DataLoader(ds, batch_sampler=batches)
+    return batches, data.DataLoader(ds, batch_sampler=batches)
 
-class StatefulSampler(Sampler):
+class StatefulSampler(data.Sampler):
     """Note that the actual batch size could be slightly smaller than given due to
     the residue being too small"""
     def __init__(self, num_seq, batch_size, padding_val=0):
@@ -90,7 +88,7 @@ class StatefulSampler(Sampler):
             padding_value=padding_val
         )
         self.batch_id = self.padded_batch[0]
-        assert self.batch_id.shape == (self.num_batch, batch_size)
+        shape_assert(self.batch_id, (self.num_batch, batch_size))
         print("Split data into {0} x {1} batches".format(*self.batch_id.shape))
 
     def __iter__(self):
@@ -109,86 +107,94 @@ def write_binfile(m_data, filename):
 if __name__ == "__main__":
     if args['train_srnn']:
         from model import SampleRNN
-        ratios = [1, 2, 2, 8]
+        ratios = [2, 2, 8]
         val_rate = .10
         up_rate = np.prod(ratios)
 
         with h5py.File('data/vocoder/all_vocoder.hdf5', 'r') as f:
             voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
         input_data = voc_dic['voc_scaled_cat'][::up_rate, :]
-        trunc_out = split_by_size(voc_dic['voc_scaled_cat'], truncate_size)
-        trunc_in = split_by_size(input_data, truncate_size // up_rate)
+        trunc_out = split_2d(voc_dic['voc_scaled_cat'], truncate_size)
+        trunc_in = split_2d(input_data, truncate_size // int(up_rate))
         assert trunc_in.shape[0] == trunc_out.shape[0]
         all_data = data.TensorDataset(trunc_in, trunc_out)
-        all_size = len(all_data)
-        train_size = math.floor(all_size * (1 - val_rate))
+        train_size = math.floor(len(all_data) * (1 - val_rate))
         train_set, val_set = bipart_dataset(all_data, train_size)
         train_bch, train_loader = load_stateful_batch(
             train_set, train_size, batch_size)
         val_bch, val_loader = load_stateful_batch(
             val_set, len(val_set), batch_size)
+
         try:
             rs, frame_size = ratios[:-1], ratios[-1]
             srnn = SampleRNN(
                 vocoder_size = 82,
                 ratios = rs,
+                hid_up_size = 82,
                 frame_size = frame_size,
                 batch_size = batch_size)
         except NameError:
-            srnn = SampleRNN(vocoder_size = 82, batch_size = batch_size)
+            srnn = SampleRNN(
+                vocoder_size = 82,
+                batch_size = batch_size,
+                hid_up_size = 82)
         init_by_class[srnn.__class__](srnn)
-
-        optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
+        srnn.init_states(batch_size = batch_size)
         loss_criterion = MagPhaseLoss(batch_size=batch_size)
 
-        srnn.init_states()
         dev_loss = []
         print('Calculating initial loss on validation set...')
         for x, tar in val_loader:
-            y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
+            y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
             loss = loss_criterion(y, tar)
             dev_loss.append(loss.item())
         print('Dev loss before training: %.3f' % (np.mean(dev_loss)))
         print('-------------------------------------------------------------')
 
-        for epoch in range(1, epochs+1):
+        optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
+        for _e in range(1, epochs+1):
             losses = []
             start = time.time()
-            srnn.init_states()
-            # for i, case in enumerate(train_loader, 1):
-            for i, case in tqdm(enumerate(train_loader, 1)):
-                x, tar = case
-                y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
-                loss = loss_criterion(y, tar)
+            teacher_forcing = 1 - _e / epochs
+            for x, tar in tqdm(train_loader):
                 optimizer.zero_grad()
+                y = srnn(
+                    x_in = tar.transpose(0, 1),
+                    hid_up = x.transpose(0, 1),
+                    tf_rate = teacher_forcing)[1].transpose(0, 1)
+                loss = loss_criterion(y, tar)
                 loss.backward()
                 nn.utils.clip_grad_norm_(srnn.parameters(), 5.)
                 optimizer.step()
                 losses.append(loss.item())
                 srnn.hid_detach()
             elapsed = time.time() - start
-            print('Epoch: %d Training Loss: %.3f;' % (epoch, np.mean(losses)), end='| ')
-                  # 'took %.3f sec ' % (elapsed))
+            print('Epoch: %d Training Loss: %.3f; ' % (_e, np.mean(losses)), end='| ')
 
             dev_nll = []
-            for i, case in enumerate(val_loader, 1):
-                x, tar = case
-                y = srnn(x.transpose(0, 1))[1].transpose(0, 1)
+            for x, tar in val_loader:
+                y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
                 loss = loss_criterion(y, tar)
                 dev_nll.append(loss.item())
-            print('Epoch: %d Dev Loss: %.3f' % (epoch, np.mean(dev_nll)))
+            print('Epoch: %d Dev Loss: %.3f' % (_e, np.mean(dev_nll)))
             print('-------------------------------------------------------------')
-        torch.save(srnn.state_dict(), 'data/model.torch')
+        torch.save(srnn.state_dict(), model_path)
 
+
+    if args['synth']:
         voc_utt_idx = voc_dic['voc_utt_idx']
         voc_mean, voc_std = voc_dic['voc_mean'], voc_dic['voc_std']
         test_id = torch.randint(len(voc_utt_idx) - 1, (test_size,))
-        srnn.B = 1
+        # srnn.B = 1
+        if not args['train_srnn']:
+            pass
+            # srnn =
+        srnn.eval()
+        srnn.init_states(batch_size=1)
         from glob import glob
         if not glob(synth_dir):
             os.mkdir(synth_dir)
         for i in test_id:
-            srnn.init_states()
             gt_vocoder = voc_dic['voc_scaled_cat'][voc_utt_idx[i]:voc_utt_idx[i+1]]
             gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
             assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
@@ -197,7 +203,9 @@ if __name__ == "__main__":
             gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
             inp = gt_vocoder[::up_rate, :].unsqueeze(0)
             with torch.no_grad():
-                out_vocoder = srnn(inp.transpose(0, 1))[1].transpose(0, 1).squeeze()
+                out_vocoder = srnn(
+                    torch.zeros(gt_vocoder.shape).unsqueeze_(1),
+                    inp.transpose(0, 1))[1].transpose(0, 1).squeeze()
             out_voiced = torch.bernoulli(out_vocoder[:, -2])
             out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
             out_magphase[:, -1][(1 - out_voiced).byte()] = -1.0e+10

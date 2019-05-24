@@ -74,7 +74,7 @@ def read_binfile(filename, dim=60):
     m_data = v_data.reshape((-1, dim)) #.astype('float64') # This is to keep compatibility with numpy default dtype.
     return  m_data
 
-def wav2voc(wavdir, outdir, wav_name, save_space=False, **kwargs):
+def wav2voc(wavdir, outdir, wav_name): #, save_space=False, **kwargs):
     mag_dim, phase_dim = size_feats[:2]
     mp.analysis_for_acoustic_modelling(path.join(wavdir, wav_name+'.wav'),
                                        outdir,
@@ -85,7 +85,7 @@ def wav2voc(wavdir, outdir, wav_name, save_space=False, **kwargs):
     fnames_feats = ['.'.join((wav_name, f)) for f in features]
     for feat_file, dim in zip(fnames_feats, size_feats):
         mp_all.append(read_binfile(path.join(outdir, feat_file), dim))
-    if save_space:
+    if args['save_space']:
         for f in glob(os.path.join(outdir, wav_name+'*')):
             os.remove(f)
     with h5py.File(path.join(outdir, wav_name + '.hdf5'), "w") as f:
@@ -94,43 +94,77 @@ def wav2voc(wavdir, outdir, wav_name, save_space=False, **kwargs):
 def voc_arr2wav(voc_arr, outdir, wav_name):
     mag_dim, phase_dim = size_feats[:2]
 
+def scale_m_std(tensor_2d, ax=0):
+    _m, _s = tensor_2d.mean(axis=ax), tensor_2d.std(axis=ax)
+    return _m, _s, (tensor_2d - _m) / _s
+
+def get_mean_std(tensor_2d, ax=0):
+    return tensor_2d.mean(axis=ax), tensor_2d.std(axis=ax)
+
+def concat_zip(ls, ax=0):
+    return [np.concatenate(tp, axis=ax) for tp in zip(*ls)]
+
+def mask_scale_mpl(voc_arr, lf0_dim=-1, critr=np.exp):
+    if lf0_dim == -1 or lf0_dim == voc_arr.shape[1] - 1:
+        _mp, _lf = np.split(voc_arr, [lf0_dim], axis=1)
+    else:
+        _lf = voc_arr[:, lf0_dim]
+        _mp = np.delete(voc_arr, lf0_dim, 1)
+    vuv = critr(_lf) > 0
+    mp_ms, lf_ms = [get_mean_std(_v) for _v in (_mp, _lf[vuv].reshape(-1, 1))]
+    _m, _s = concat_zip([mp_ms, lf_ms], ax=0)
+    return _m, _s, vuv, (voc_arr - _m) / _s
 
 if __name__ == '__main__':
     do_parallelize = args['no_batch']   # False if the flag is activated, otherwise True
     files = glob(indir + '/*')
     if args['frac']:
-        files = files[:5]
+        files = files[5:10]
     all_tkn = [path.basename(file).split('.')[0] for file in files]
     file_tkn = all_tkn if args['overwrite'] else sorted(set(all_tkn) - already_in)
 
     if mode == "extract":
         if do_parallelize:
-            lu.run_multithreaded(wav2voc, indir, outdir, file_tkn, args['save_space'])
+            lu.run_multithreaded(wav2voc, indir, outdir, file_tkn)
         else:
             for wn in file_tkn:
-                wav2voc(indir, outdir, wn, save_space=args['save_space'])
+                wav2voc(indir, outdir, wn)
 
         all_mps = []
         for tkn in sorted(all_tkn):
             with h5py.File(os.path.join(outdir, tkn+'.hdf5'), 'r') as f:
                 all_mps.append(np.array(f.get('mp')))
-            os.remove(os.path.join(outdir, tkn+'.hdf5'))
+            if args['save_space']:
+                os.remove(os.path.join(outdir, tkn+'.hdf5'))
         all_voc = np.concatenate(all_mps, axis=0)
         sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
         assert all_voc.shape[0] == sent_idx[-1]
-        all_cat, all_lf0 = all_voc[:, :-1], all_voc[:, -1]
-        voiced = np.exp(all_lf0) > 0
-        lf0_ms = [all_lf0[voiced].mean(axis=0), all_lf0[voiced].std()]
-        mp_ms = [all_cat.mean(axis=0), all_cat.std(axis=0)]
-        all_mean, all_std = [np.concatenate((_mp, _l.reshape(1)), axis=0)
-                             for _mp, _l in zip(mp_ms, lf0_ms)]
-        all_scaled = (all_voc - all_mean) / all_std
-        with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
-            f['voc_utt_idx'] = sent_idx
-            f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced, axis=1)
-            f['voc_mean'], f['voc_std'] = all_mean, all_std
-            print(f['voc_mean'][-1], f['voc_std'][-1])
-
+        if args['overwrite'] or (not glob(os.path.join(outdir, 'all_vocoder.hdf5'))):
+            # new_mp, new_lf = np.split(all_voc, [-1], axis=1)# all_voc[:, :-1], all_voc[:, -1]
+            # voiced = np.exp(new_lf) > 0
+            # mp_ms, l_ms = [get_mean_std(_v) for _v in (new_mp, new_lf[voiced].reshape(-1, 1))]
+            # all_mean, all_std = concat_zip([mp_ms, l_ms], ax=0)
+            # all_scaled = (all_voc - all_mean) / all_std
+            # print(all_scaled.shape, voiced.shape)
+            with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
+                f['voc_utt_idx'] = sent_idx
+                f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_voc)
+                f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
+                # f['voc_mean'], f['voc_std'] = all_mean, all_std
+                print(sent_idx[-1], f['voc_scaled_cat'].shape,
+                      f['voc_mean'][-1], f['voc_std'][-1])
+        else:
+            with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'a') as f:
+                voc_dic = {k: np.array(f.pop(k)) for k in f.keys()}
+                b4_uid, ending_id = np.split(voc_dic['voc_utt_idx'], [-1])
+                f['voc_utt_idx'] = np.concatenate([b4_uid, sent_idx + ending_id])
+                b4_unscaled = np.delete(voc_dic['voc_scaled_cat'], -2, axis=1) \
+                              * voc_dic['voc_std'] + voc_dic['voc_mean']
+                all_unscaled = np.concatenate([b4_unscaled, all_voc])
+                f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_unscaled)
+                f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
+                print(f['voc_utt_idx'].shape, f['voc_scaled_cat'].shape,
+                      f['voc_mean'][-1], f['voc_std'][-1])
 
     if mode == "synth":
         # print(file_tkn)
