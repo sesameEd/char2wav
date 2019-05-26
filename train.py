@@ -158,6 +158,7 @@ if __name__ == "__main__":
 
         optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
         for _e in range(1, epochs+1):
+            srnn.init_states(batch_size = batch_size)
             losses = []
             start = time.time()
             teacher_forcing = 1 - _e / epochs
@@ -178,11 +179,13 @@ if __name__ == "__main__":
             print('Epoch: %d Training Loss: %.3f; ' % (_e, np.mean(losses)), end='| ')
 
             dev_nll = []
-            for x, tar in val_loader:
-                x, tar = x.to(device), tar.to(device)
-                y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
-                loss = loss_criterion(y, tar)
-                dev_nll.append(loss.item())
+            srnn.eval()
+            with torch.no_grad():
+                for x, tar in val_loader:
+                    x, tar = x.to(device), tar.to(device)
+                    y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
+                    loss = loss_criterion(y, tar)
+                    dev_nll.append(loss.item())
             print('Epoch: %d Dev Loss: %.3f' % (_e, np.mean(dev_nll)))
             print('-------------------------------------------------------------')
         torch.save(srnn.state_dict(), model_path)

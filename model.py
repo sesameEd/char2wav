@@ -120,7 +120,8 @@ class Char2Voc(nn.modules.Module):
         if self.E:
             self.embedding = nn.Sequential(nn.Linear(self.C, self.E),
                                            nn.LayerNorm([self.T, self.E]))
-        self.add_module('encoder', nn.LSTM(self.I, encoded_size, bidirectional=True))
+        self.add_module('encoder', nn.LSTM(self.I, encoded_size,
+            bidirectional=True))
         self.add_module('attention', Attn(num_component=3,
                                           decoded_size=decoded_size,
                                           len_seq=self.T))
@@ -208,7 +209,7 @@ class FrameLevel(nn.modules.Module):
         _B, _SG = x_in.shape
         shape_assert(hid_up, (_B, -1))
         if (hid_up == 0).all():
-            c_j = [torch.zeros(_B, self.I) for _ in range(self.R)]
+            c_j = [torch.zeros(_B, self.I).to(device) for _ in range(self.R)]
         else:
             c_j = self.w_j(hid_up).split(self.I, dim=-1)
         x_in = deque(x_in.chunk(self.R, dim=-1), maxlen=self.R)
