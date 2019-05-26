@@ -147,7 +147,8 @@ if __name__ == "__main__":
 
         dev_loss = []
         print('Calculating initial loss on validation set...')
-        for x, tar in val_loader:
+        # with torch.no_grad():
+        for x, tar in tqdm(val_loader):
             x, tar = x.to(device), tar.to(device)
             y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
             loss = loss_criterion(y, tar)
