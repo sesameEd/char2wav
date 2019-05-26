@@ -140,17 +140,10 @@ if __name__ == '__main__':
         sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
         assert all_voc.shape[0] == sent_idx[-1]
         if args['overwrite'] or (not glob(os.path.join(outdir, 'all_vocoder.hdf5'))):
-            # new_mp, new_lf = np.split(all_voc, [-1], axis=1)# all_voc[:, :-1], all_voc[:, -1]
-            # voiced = np.exp(new_lf) > 0
-            # mp_ms, l_ms = [get_mean_std(_v) for _v in (new_mp, new_lf[voiced].reshape(-1, 1))]
-            # all_mean, all_std = concat_zip([mp_ms, l_ms], ax=0)
-            # all_scaled = (all_voc - all_mean) / all_std
-            # print(all_scaled.shape, voiced.shape)
             with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
                 f['voc_utt_idx'] = sent_idx
                 f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_voc)
                 f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
-                # f['voc_mean'], f['voc_std'] = all_mean, all_std
                 print(sent_idx[-1], f['voc_scaled_cat'].shape,
                       f['voc_mean'][-1], f['voc_std'][-1])
         else:

@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from collections import deque
 import torch.nn.init as init
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 def shape_assert(t, shape):
     assert len(t.shape) == len(shape) and all(
         x == y or y == -1 for x, y in zip(t.shape, shape)), \
@@ -36,10 +38,11 @@ def to_onehot(idx, batch_shape, N_cat, padded=None):
                 ).transpose_(-1, 0)[padded:].transpose_(-1, 0)
 
 def var(tensor):
-    if torch.cuda.is_available():
-        return tensor.cuda()
-    else:
-        return tensor
+    return tensor.to(device)
+    # if torch.cuda.is_available():
+    #     return tensor.cuda()
+    # else:
+    #     return tensor
 
 def init_weights(name, net):
     suffix = name.split('.')[-1]

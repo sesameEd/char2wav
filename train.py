@@ -32,6 +32,8 @@ learning_rate = args['learning_rate']
 test_size = 5
 synth_dir = args['voc_synth_dir']
 model_path = 'data/model.torch'
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 class MagPhaseLoss(nn.Module):
     def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
@@ -138,6 +140,7 @@ if __name__ == "__main__":
                 vocoder_size = 82,
                 batch_size = batch_size,
                 hid_up_size = 82)
+        srnn.to(device)
         init_by_class[srnn.__class__](srnn)
         srnn.init_states(batch_size = batch_size)
         loss_criterion = MagPhaseLoss(batch_size=batch_size)
@@ -145,6 +148,7 @@ if __name__ == "__main__":
         dev_loss = []
         print('Calculating initial loss on validation set...')
         for x, tar in val_loader:
+            x, tar = x.to(device), tar.to(device)
             y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
             loss = loss_criterion(y, tar)
             dev_loss.append(loss.item())
@@ -157,6 +161,7 @@ if __name__ == "__main__":
             start = time.time()
             teacher_forcing = 1 - _e / epochs
             for x, tar in tqdm(train_loader):
+                x, tar = x.to(device), tar.to(device)
                 optimizer.zero_grad()
                 y = srnn(
                     x_in = tar.transpose(0, 1),
@@ -173,6 +178,7 @@ if __name__ == "__main__":
 
             dev_nll = []
             for x, tar in val_loader:
+                x, tar = x.to(device), tar.to(device)
                 y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
                 loss = loss_criterion(y, tar)
                 dev_nll.append(loss.item())
@@ -201,7 +207,7 @@ if __name__ == "__main__":
                     'wrong dimension for voicedness '
             gt_magphase[:, -1][(1 - gt_vocoder[:, -2]).byte()] = -1.0e+10
             gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
-            inp = gt_vocoder[::up_rate, :].unsqueeze(0)
+            inp = gt_vocoder[::up_rate, :].unsqueeze(0).to(device)
             with torch.no_grad():
                 out_vocoder = srnn(
                     torch.zeros(gt_vocoder.shape).unsqueeze_(1),
