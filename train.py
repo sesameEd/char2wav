@@ -10,6 +10,7 @@ import torch.optim as optim
 import torch.utils.data as data
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 from model import init_by_class, shape_assert
 from tqdm import tqdm
 
@@ -37,7 +38,7 @@ print(device)
 
 class MagPhaseLoss(nn.Module):
     def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
-                 loss_type=F.l1_loss):
+                 loss_type=F.l1_loss, get_mean=True):
         """loss_type must be a contiguous loss (instead of a categorical one),
                      must be of nn.functional class (instead of nn.Module) """
         super(MagPhaseLoss, self).__init__()
@@ -46,6 +47,7 @@ class MagPhaseLoss(nn.Module):
         self.dim_lf0 = dim_lf0
         self.dim_uvu = dim_uvu # dimension of voiced/unvoiced bool
         self.loss_type = loss_type
+        self.get_mean = get_mean
 
     def forward(self, input, target):
         shape_assert(input, (self.B, -1, self.V))
@@ -57,8 +59,11 @@ class MagPhaseLoss(nn.Module):
         uvu = target.transpose(0, -1)[self.dim_uvu]
         assert ((uvu == 0) + (uvu == 1)).all(), (uvu.shape, uvu[0])
         loss_lf = torch.masked_select(losses[-1], uvu.byte())
-        loss_rest = losses[:-1].flatten()
-        return torch.cat((loss_rest, loss_lf)).mean()
+        if self.get_mean:
+            loss_rest = losses[:-1].flatten()
+            return torch.cat((loss_rest, loss_lf)).mean()
+        else:
+            loss_1 = loss_lf.view((-1, self.B))
 
 def split_2d(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -83,8 +88,6 @@ class StatefulSampler(data.Sampler):
         self.num_batch = math.ceil(self.num_seq / self.B)
         _a = torch.arange(num_seq)
         batches = [_a[i::self.num_batch] for i in range(self.num_batch)]
-        self.padded_batch = nn.utils.rnn.pad_packed_sequence(
-            nn.utils.rnn.pack_sequence(batches),
             batch_first=True,
             total_length=batch_size,
             padding_value=padding_val
@@ -145,18 +148,20 @@ if __name__ == "__main__":
         srnn.init_states(batch_size = batch_size)
         loss_criterion = MagPhaseLoss(batch_size=batch_size)
 
-        dev_loss = []
-        print('Calculating initial loss on validation set...')
-        with torch.no_grad():
-            for x, tar in tqdm(val_loader):
-                x, tar = x.to(device), tar.to(device)
-                y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
-                loss = loss_criterion(y, tar)
-                dev_loss.append(loss.item())
-            print('Dev loss before training: %.3f' % (np.mean(dev_loss)))
-            print('-------------------------------------------------------------')
+        #dev_loss = []
+        #print('Calculating initial loss on validation set...')
+        #with torch.no_grad():
+        #    for x, tar in tqdm(val_loader):
+        #        x, tar = x.to(device), tar.to(device)
+        #        y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
+        #        loss = loss_criterion(y, tar)
+        #        dev_loss.append(loss.item())
+        #    print('Dev loss before training: %.3f' % (np.mean(dev_loss)))
+        #    print('-------------------------------------------------------------')
 
         optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
+        tb = SummaryWriter(log_dir='data/tensorboard')
+        id_loss = 0
         for _e in range(1, epochs+1):
             srnn.init_states(batch_size = batch_size)
             losses = []
@@ -173,10 +178,12 @@ if __name__ == "__main__":
                 loss.backward()
                 nn.utils.clip_grad_norm_(srnn.parameters(), 5.)
                 optimizer.step()
-                losses.append(loss.item())
+                tb.add_scalar('loss/train', loss, id_loss)
+                id_loss += 1
+                # losses.append(loss.item())
                 srnn.hid_detach()
             elapsed = time.time() - start
-            print('Epoch: %d Training Loss: %.3f; ' % (_e, np.mean(losses)), end='| ')
+            # print('Epoch: %d Training Loss: %.3f; ' % (_e, np.mean(losses)), end='| ')
 
             dev_nll = []
             srnn.eval()
@@ -186,8 +193,9 @@ if __name__ == "__main__":
                     y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
                     loss = loss_criterion(y, tar)
                     dev_nll.append(loss.item())
-            print('Epoch: %d Dev Loss: %.3f' % (_e, np.mean(dev_nll)))
-            print('-------------------------------------------------------------')
+            tb.add_scalar('loss/dev', np.mean(dev_nll), id_loss)
+            # print('Epoch: %d Dev Loss: %.3f' % (_e, np.mean(dev_nll)))
+            # print('-------------------------------------------------------------')
         torch.save(srnn.state_dict(), model_path)
 
 
@@ -227,3 +235,5 @@ if __name__ == "__main__":
                                                 'srnn_{:05d}.{}'.format(i, ft)))
         print('synthesizing voices from generated vocoder features.')
         os.system('./voc_extract.py -m  synth -v data/synth_voc/ -w data/wavs_syn/')
+#!/usr/bin/python3
+import argparse
