@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from model import init_by_class, shape_assert
 from tqdm import tqdm
+from glob import glob
 
 parser = argparse.ArgumentParser(
     "-s | --sample_rnn, train sample_rnn"
@@ -26,7 +27,7 @@ parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
 parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/')
 parser.add_argument('--avg_loss', action='store_true')
 args = vars(parser.parse_args())
-
+print(args)
 truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
@@ -35,6 +36,9 @@ test_size = 5
 synth_dir = args['voc_synth_dir']
 model_path = 'data/model.torch'
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+tb_dir = 'data/tensorboard'
+for f in glob(os.path.join(tb_dir, '*')):
+    os.remove(f)
 print(device)
 
 class MagPhaseLoss(nn.Module):
@@ -52,22 +56,24 @@ class MagPhaseLoss(nn.Module):
 
     def forward(self, input, target):
         shape_assert(input, (self.B, -1, self.V))
-        shape_assert(target, (self.B, -1, self.V))
-        losses = self.loss_type(input, target, reduction='none')
-        # if self.dim_lf0 != -1 and self.dim_lf0 != self.V-1:
-        #     assert self.dim_uvu != -1 and self.dim_uvu != self.V-1
-        #     losses[[self.dim_lf0, -1]] = losses[[-1, self.dim_lf0]]
-        # uvu = target.transpose(0, -1)[self.dim_uvu]
-        uvu = target[:, :, self.dim_uvu]
+        _B, _T, _V = input.shape
+        shape_assert(target, (_B, _T, _V))
+        losses = self.loss_type(input, target, reduction='none').transpose(0, -1)
+        if self.dim_lf0 != -1 and self.dim_lf0 != _V-1:
+            assert self.dim_uvu != -1 and self.dim_uvu != _V-1
+            losses[[self.dim_lf0, -1]] = losses[[-1, self.dim_lf0]]
+        uvu = target.transpose(0, -1)[self.dim_uvu]
+        # uvu = target[:, :, self.dim_uvu]i
+        shape_assert(uvu, (-1, _B))
+        shape_assert(losses[-1], (-1, _B))
         assert ((uvu == 0) + (uvu == 1)).all(), (uvu.shape, uvu[0])
-        # print(losses[:, :, self.dim_lf0].shape, uvu.shape)
-        loss_lf = torch.masked_select(losses[:, :, self.dim_lf0], uvu.byte())
-        if self.get_mean:
+        loss_lf = torch.masked_select(losses[-1], uvu.byte())
+        if args['avg_loss']:
             loss_rest = losses[:-1].flatten()
             return torch.cat((loss_rest, loss_lf)).mean()
         else:
-            loss_1 = loss_lf.view(self.B, -1).mean(dim=0).sum()
-            return loss_1 + losses[:-1].mean(dim=0).sum()
+            loss_1 = loss_lf.view(-1, _B).mean(dim=-1).sum()
+            return loss_1 + losses[:-1].mean(dim=-1).sum()
 
 def split_2d(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -155,7 +161,7 @@ if __name__ == "__main__":
         loss_criterion = MagPhaseLoss(batch_size=batch_size)
 
         optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
-        tb = SummaryWriter(log_dir='data/tensorboard')
+        tb = SummaryWriter(log_dir=tb_dir)
         id_loss = 0
         for _e in range(1, epochs+1):
             srnn.init_states(batch_size = batch_size)
@@ -175,7 +181,9 @@ if __name__ == "__main__":
                 optimizer.step()
                 tb.add_scalar('loss/train', loss, id_loss)
                 id_loss += 1
+                losses.append(loss.item())
                 srnn.hid_detach()
+            print('Epoch: %d Training Loss: %.3f; ' % (_e, np.mean(losses)), end='| ')
 
             dev_nll = []
             srnn.eval()
@@ -185,6 +193,7 @@ if __name__ == "__main__":
                     y = srnn(tar.transpose(0, 1), x.transpose(0, 1))[1].transpose(0, 1)
                     loss = loss_criterion(y, tar)
                     dev_nll.append(loss.item())
+            print('Dev Loss: %.3f' % (np.mean(dev_nll)))
             tb.add_scalar('loss/dev', np.mean(dev_nll), id_loss)
         torch.save(srnn.state_dict(), model_path)
 
