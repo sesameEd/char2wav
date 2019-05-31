@@ -72,7 +72,7 @@ class MagPhaseLoss(nn.Module):
             loss_rest = losses[:-1].flatten()
             return torch.cat((loss_rest, loss_lf)).mean()
         else:
-            loss_1 = loss_lf.view(-1, _B).mean(dim=-1).sum()
+            loss_1 = loss_lf.sum() / _B
             return loss_1 + losses[:-1].mean(dim=-1).sum()
 
 def split_2d(tensor_2d, chunk_size, pad_val=0):
