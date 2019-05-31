@@ -20,4 +20,5 @@ misc/test_getopt.sh
 *.swp
 *.swn
 *.swo
+*.est
 stanford-corenlp-full-2018-02-27

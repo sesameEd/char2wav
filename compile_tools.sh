@@ -20,6 +20,7 @@ display_help() {
     echo "-a, --all            compiles all of the above dependencies"
 }
 
+
 GET_CORENLP=false
 GET_FFMPEG=false
 GET_FMN=false
@@ -62,7 +63,7 @@ while true; do
     esac
 done
 
-# git submodule update --init --recursive
+pip install --user -r requirements.txt
 
 if [ "$GET_MAGPHASE" = true ]; then
   echo ===============================compiling magphase=============================
@@ -71,12 +72,6 @@ if [ "$GET_MAGPHASE" = true ]; then
   ./download_and_compile_tools.sh
   cd ../../
 fi
-
-# if [ "$GET_NLTK" = true ]; then
-#   echo ===============================installing NLTK=============================
-#   pip install --user nltk
-#   python -m nltk.downloader punkt
-# fi
 
 if [ "$GET_CORENLP" = true ]; then
   echo ===========================compiling Stanford CoreNLP=========================
