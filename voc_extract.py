@@ -23,6 +23,7 @@ parser.add_argument('-w', '--wavdir', default='data/normalized', type=str,
                     help='default to "data/normalized"')
 parser.add_argument('-v', '--vocdir', default='data/vocoder', type=str,
                     help='default to "data/vocoder"')
+parser.add_argument('-F', '--file_tkn', nargs='*', type=str, default=[])
 
 parser.add_argument('-M', '--n_mag', default=60, type=int, dest='dim_mag')
 parser.add_argument('-R', '--n_real', default=10, type=int, dest='dim_real')
@@ -121,7 +122,10 @@ if __name__ == '__main__':
     if args['frac']:
         files = files[5:10]
     all_tkn = [path.basename(file).split('.')[0] for file in files]
-    file_tkn = all_tkn if args['overwrite'] else sorted(set(all_tkn) - already_in)
+    if len(args['file_tkn']) > 0:
+        file_tkn = args['file_tkn']
+    else:
+        file_tkn = all_tkn if args['overwrite'] else sorted(set(all_tkn) - already_in)
 
     if mode == "extract":
         if do_parallelize:

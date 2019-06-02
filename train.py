@@ -26,6 +26,7 @@ parser.add_argument('--truncate_size', type=int, default=512)
 parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
 parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/')
 parser.add_argument('--avg_loss', action='store_true')
+parser.add_argument('-d', '--dropout', type=float, default=0.5)
 args = vars(parser.parse_args())
 print(args)
 truncate_size = args['truncate_size']
@@ -42,7 +43,7 @@ for f in glob(os.path.join(tb_dir, '*')):
 print(device)
 
 class MagPhaseLoss(nn.Module):
-    def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_uvu=-2,
+    def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_vuv=-2,
                  loss_type=F.l1_loss):
         """loss_type must be a contiguous loss (instead of a categorical one),
                      must be of nn.functional class (instead of nn.Module) """
@@ -50,7 +51,7 @@ class MagPhaseLoss(nn.Module):
         self.B = batch_size
         self.V = vocoder_size
         self.dim_lf0 = dim_lf0
-        self.dim_uvu = dim_uvu # dimension of voiced/unvoiced bool
+        self.dim_vuv = dim_vuv # dimension of voiced/unvoiced bool
         self.loss_type = loss_type
         self.get_mean = args['avg_loss']
 
@@ -60,14 +61,13 @@ class MagPhaseLoss(nn.Module):
         shape_assert(target, (_B, _T, _V))
         losses = self.loss_type(input, target, reduction='none').transpose(0, -1)
         if self.dim_lf0 != -1 and self.dim_lf0 != _V-1:
-            assert self.dim_uvu != -1 and self.dim_uvu != _V-1
+            assert self.dim_vuv != -1 and self.dim_vuv != _V-1
             losses[[self.dim_lf0, -1]] = losses[[-1, self.dim_lf0]]
-        uvu = target.transpose(0, -1)[self.dim_uvu]
-        # uvu = target[:, :, self.dim_uvu]i
-        shape_assert(uvu, (-1, _B))
+        vuv = target.transpose(0, -1)[self.dim_vuv]
+        shape_assert(vuv, (-1, _B))
         shape_assert(losses[-1], (-1, _B))
-        assert ((uvu == 0) + (uvu == 1)).all(), (uvu.shape, uvu[0])
-        loss_lf = torch.masked_select(losses[-1], uvu.byte())
+        assert ((vuv == 0) + (vuv == 1)).all(), (vuv.shape, vuv[0])
+        loss_lf = torch.masked_select(losses[-1], vuv.byte())
         if args['avg_loss']:
             loss_rest = losses[:-1].flatten()
             return torch.cat((loss_rest, loss_lf)).mean()
@@ -115,21 +115,22 @@ class StatefulSampler(data.Sampler):
         return self.num_batch
 
 def write_binfile(m_data, filename):
-    m_data = np.array(m_data, 'float32') # Ensuring float32 output
+    m_data = np.array(m_data.cpu(), 'float32') # Ensuring float32 output
     fid = open(filename, 'wb')
     m_data.tofile(fid)
     fid.close()
     return
 
 if __name__ == "__main__":
+    with h5py.File('data/vocoder/all_vocoder.hdf5', 'r') as f:
+        voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
+
     if args['train_srnn']:
         from model import SampleRNN
         ratios = [2, 2, 8]
         val_rate = .10
         up_rate = np.prod(ratios)
 
-        with h5py.File('data/vocoder/all_vocoder.hdf5', 'r') as f:
-            voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
         input_data = voc_dic['voc_scaled_cat'][::up_rate, :]
         trunc_out = split_2d(voc_dic['voc_scaled_cat'], truncate_size)
         trunc_in = split_2d(input_data, truncate_size // int(up_rate))
@@ -149,6 +150,7 @@ if __name__ == "__main__":
                 ratios = rs,
                 hid_up_size = 82,
                 frame_size = frame_size,
+                dropout = args['dropout'],
                 batch_size = batch_size)
         except NameError:
             srnn = SampleRNN(
@@ -219,10 +221,10 @@ if __name__ == "__main__":
             inp = gt_vocoder[::up_rate, :].unsqueeze(0).to(device)
             with torch.no_grad():
                 out_vocoder = srnn(
-                    torch.zeros(gt_vocoder.shape).unsqueeze_(1),
+                    torch.zeros(gt_vocoder.shape, device=device).unsqueeze_(1),
                     inp.transpose(0, 1))[1].transpose(0, 1).squeeze()
             out_voiced = torch.bernoulli(out_vocoder[:, -2])
-            out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
+            out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std.to(device) + voc_mean.to(device)
             out_magphase[:, -1][(1 - out_voiced).byte()] = -1.0e+10
             out_split = torch.split(out_magphase, [60, 10, 10, 1], dim=1)
             for gt, out, ft in zip(gt_split, out_split, ['mag', 'real', 'imag', 'lf0']):
@@ -230,5 +232,5 @@ if __name__ == "__main__":
                                                'ground_truth_{:05d}.{}'.format(i, ft)))
                 write_binfile(out, os.path.join(synth_dir,
                                                 'srnn_{:05d}.{}'.format(i, ft)))
-        print('synthesizing voices from generated vocoder features.')
-        os.system('./voc_extract.py -m  synth -v data/synth_voc/ -w data/wavs_syn/')
+            os.system('./voc_extract.py -m synth -v data/synth_voc/ -w data/wavs_syn/ ' + \
+                      '-F ground_truth_{0:05d} srnn_{0:05d}'.format(i));
