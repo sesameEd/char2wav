@@ -21,15 +21,15 @@ parser = argparse.ArgumentParser(
     )
 # parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true')
 # parser.add_argument('--synth', action='store_true')
-parser.add_argument('--data', type=str, default='data/vocoder/all_vocoder.hdf5')
-parser.add_argument('-e', '--epochs', type=int, default=10)
-parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--truncate_size', type=int, default=512)
-parser.add_argument('--lr', dest='learning_rate', type=float, default=4e-4)
-parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/')
-parser.add_argument('--avg_loss', action='store_true')
-parser.add_argument('-d', '--dropout', type=float, default=0.5)
-parser.add_argument('-R', '--ratios', type=int, nargs='*', default=[2, 2, 8])
+parser.add_argument('--data', type=str, default='data/vocoder/all_vocoder.hdf5', help="default='data/vocoder/all_vocoder.hdf5'")
+parser.add_argument('-e', '--epochs', type=int, default=10, help='default=10')
+parser.add_argument('--batch_size', type=int, default=32, help='default=32')
+parser.add_argument('--truncate_size', type=int, default=512, help='default=512')
+parser.add_argument('--lr', '--learning_rate', dest='learning_rate', type=float, default=4e-4, help='default=4e-4')
+parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')
+# parser.add_argument('--avg_loss', action='store_true')
+parser.add_argument('-d', '--dropout', type=float, default=0.5, help='default=0.5')
+parser.add_argument('-R', '--ratios', type=int, nargs='*', default=[2, 2, 8], help='default=[2, 2, 8]')
 args = vars(parser.parse_args())
 print(args)
 truncate_size = args['truncate_size']
@@ -63,7 +63,7 @@ class MagPhaseLoss(nn.Module):
         self.dim_lf0 = dim_lf0
         self.dim_vuv = dim_vuv # dimension of voiced/unvoiced bool
         self.loss_type = loss_type
-        self.get_mean = args['avg_loss']
+        # self.get_mean = args['avg_loss']
 
     def forward(self, y, target):
         shape_assert(y, (self.B, -1, self.V))

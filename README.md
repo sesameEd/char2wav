@@ -71,3 +71,7 @@ if it's not 48000
 ```
 #### Extracting character sequences
 - ./char_extract.py
+#### Train and SRNN:
+```shell
+./train_srnn.py -e 10 -R 2 2 4 -d 0.5 -batch_size 32 --learning_rate 4e-5
+```
