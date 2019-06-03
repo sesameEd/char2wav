@@ -36,7 +36,7 @@ truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
-test_size = 2
+test_size = 5
 voc_dir = args['voc_synth_dir']
 if not glob(voc_dir):
     os.mkdir(voc_dir)
@@ -142,7 +142,8 @@ def synth_model_wavs(model, i):
         pass
     os.system('./voc_extract.py -m synth -o --no_batch' + \
               ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i));
-    return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)), dtype='int16')[0]
+    # return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)), dtype='int16')[0]
+    return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
 
 def synth_gt_wavs(i):
     gt_vocoder = voc_dic['voc_scaled_cat'][voc_utt_idx[i]:voc_utt_idx[i+1]]
@@ -156,8 +157,8 @@ def synth_gt_wavs(i):
                                        'ground_truth_{:05d}.{}'.format(i, ft)))
     os.system('./voc_extract.py -m synth -o --no_batch -v {0} -w {1}'.format(voc_dir, wav_dir) + \
               ' -F ground_truth_{0:05d}'.format(i));
-    return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)),
-                   dtype='int16')[0]
+    return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
+#                    dtype='int16')[0]
 
 if __name__ == "__main__":
     global voc_dic, voc_utt_idx, voc_mean, voc_std
