@@ -28,6 +28,7 @@ parser.add_argument('-F', '--file_tkn', nargs='*', type=str, default=[])
 parser.add_argument('-M', '--n_mag', default=60, type=int, dest='dim_mag')
 parser.add_argument('-R', '--n_real', default=10, type=int, dest='dim_real')
 parser.add_argument('-r', '--sample_rate', type=int, default=48000, dest='sample_rate')
+parser.add_argument('-B', '--bit_depth', type=int, default=16)
 parser.add_argument('-o', '--overwrite', action='store_true',
                     help="if turned on, existing files in vocdir (with same file \
                           tokens as those in wavdir) will be overwritten.")
@@ -38,9 +39,10 @@ parser.add_argument('--save_space', action='store_true',
                     help='if switched on, the inter-mediate files will be deleted \
                           and only one all_vocoder.hdf5 will be preserved')
 args = vars(parser.parse_args())
-print(args)
+# print(args)
 mode = args['mode']
 sample_rate = args['sample_rate']
+bit_depth = args['bit_depth']
 dim_mag = args['dim_mag']
 dim_real = args['dim_real']
 dim_imag = dim_real
@@ -148,6 +150,8 @@ if __name__ == '__main__':
                 f['voc_utt_idx'] = sent_idx
                 f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_voc)
                 f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
+                f['sampling_rate'] = sample_rate
+                f['bit_depth'] = bit_depth
                 print(sent_idx[-1], f['voc_scaled_cat'].shape,
                       f['voc_mean'][-1], f['voc_std'][-1])
         else:
@@ -160,12 +164,14 @@ if __name__ == '__main__':
                 all_unscaled = np.concatenate([b4_unscaled, all_voc])
                 f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_unscaled)
                 f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
+                f['sampling_rate'] = sample_rate
+                f['bit_depth'] = bit_depth
                 print(f['voc_utt_idx'].shape, f['voc_scaled_cat'].shape,
                       f['voc_mean'][-1], f['voc_std'][-1])
 
     if mode == "synth":
         # print(file_tkn)
-        print('synthesizing from dir {}, saving to dir {}'.format(indir, outdir))
+        # print('synthesizing from dir {}, saving to dir {}'.format(indir, outdir))
         if do_parallelize:
             lu.run_multithreaded(mp.synthesis_from_acoustic_modelling,
                                  indir,
