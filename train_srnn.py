@@ -74,7 +74,7 @@ class MagPhaseLoss(nn.Module):
         loss_mp = self.loss_type(y_mp, tar_mp, reduction='none').sum(-1).sum(1).mean()
         loss_v = (tar_vuv * y_vuv.log()).sum(-1).sum(1).mean()
         loss_l = (self.loss_type(y_lf, tar_lf, reduction='none') * tar_vuv).sum(-1).sum(1).mean()
-        return loss_mp + loss_v + loss_l
+        return loss_mp - loss_v + loss_l
 
 def split_2d(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
