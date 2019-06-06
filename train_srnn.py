@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser(
 # parser.add_argument('--synth', action='store_true')
 parser.add_argument('--data', type=str, default='data/vocoder/all_vocoder.hdf5', help="default='data/vocoder/all_vocoder.hdf5'")
 parser.add_argument('-e', '--epochs', type=int, default=10, help='default=10')
-parser.add_argument('--batch_size', type=int, default=32, help='default=32')
+parser.add_argument('-B', '--batch_size', type=int, default=32, help='default=32')
 parser.add_argument('--truncate_size', type=int, default=512, help='default=512')
 parser.add_argument('--lr', '--learning_rate', dest='learning_rate', type=float, default=4e-4, help='default=4e-4')
 parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')

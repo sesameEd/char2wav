@@ -52,10 +52,10 @@ def get_bow_eow(list_sents):
     return bow, eow
 
 def upper_or_lower(char):
-    if char.isalpha():
-        return 1 if char.isupper() else 0
-    else:
-        return 2
+    # if char.isalpha():
+    return 1 if char.isupper() else 0
+    # else:
+        # return 2
 
 def bin_annotate_1d(indices, len_of_array):
     arr = np.zeros(len_of_array)
