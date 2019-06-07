@@ -147,10 +147,10 @@ def synth_model_wavs(model, i):
         os.remove(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))
     except FileNotFoundError:
         pass
-    subprocess.check_output('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
+    subprocess.check_output('./voc_extract.py -m synth -o --no_batch' + \
               ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
-    print('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
-              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i))
+    # print('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
+    #           ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i))
     return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
 
 def synth_gt_wavs(i):
