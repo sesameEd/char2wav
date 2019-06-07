@@ -33,6 +33,7 @@ parser.add_argument('--ss', '--scheduled_sampling', action='store_true', dest='s
 parser.add_argument('--tf', '--tf_rate', dest='tf_rate', type=float, default=1)
 parser.add_argument('--res', '--res_net', action='store_true', dest='res')
 parser.add_argument('-t', '--test_size', type=int, default=5)
+parser.add_argument('--xi', '--no_init', dest='no_init', action='store_true')
 args = vars(parser.parse_args())
 print(args)
 truncate_size = args['truncate_size']
@@ -199,7 +200,8 @@ if __name__ == "__main__":
         do_res = args['res'],
         batch_size = batch_size)
     srnn.to(device)
-    init_by_class[srnn.__class__](srnn)
+    if not args['no_init']:
+        init_by_class[srnn.__class__](srnn)
     srnn.init_states(batch_size = batch_size)
     loss_criterion = MagPhaseLoss(batch_size=batch_size)
 

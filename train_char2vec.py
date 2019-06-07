@@ -16,5 +16,4 @@ if __name__ == '__main__':
     with h5py.File(data_path, 'r') as f:
         char_dic = {k:torch.from_numpy(np.array(v)) for k,v in f.items()}
     masked_wid = torch.bernoulli(mask_rate * torch.ones(char_dic['bow_id'].shape))
-
-
+    
