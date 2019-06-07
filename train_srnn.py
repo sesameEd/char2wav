@@ -15,42 +15,48 @@ from model import init_by_class, shape_assert, SampleRNN
 from tqdm import tqdm
 from glob import glob
 import soundfile as sf
+import subprocess
 
 parser = argparse.ArgumentParser(
     "-s | --sample_rnn, train sample_rnn"
     )
-# parser.add_argument('-s', '--sample_rnn', dest='train_srnn', action='store_true')
-# parser.add_argument('--synth', action='store_true')
 parser.add_argument('--data', type=str, default='data/vocoder/all_vocoder.hdf5', help="default='data/vocoder/all_vocoder.hdf5'")
 parser.add_argument('-e', '--epochs', type=int, default=10, help='default=10')
 parser.add_argument('-B', '--batch_size', type=int, default=32, help='default=32')
 parser.add_argument('--truncate_size', type=int, default=512, help='default=512')
 parser.add_argument('--lr', '--learning_rate', dest='learning_rate', type=float, default=4e-4, help='default=4e-4')
 parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')
-# parser.add_argument('--avg_loss', action='store_true')
 parser.add_argument('-d', '--dropout', type=float, default=0.5, help='default=0.5')
 parser.add_argument('-R', '--ratios', type=int, nargs='*', default=[2, 2, 8], help='default=[2, 2, 8]')
+parser.add_argument('--ln', '--layer_norm', action='store_true', dest='layer_norm')
+parser.add_argument('--tf', '--schedl_samplg', action='store_true', dest='schedl_samplg')
+parser.add_argument('--res', '--res_net', action='store_true', dest='res')
+parser.add_argument('-t', '--test_size', type=int, default=5)
 args = vars(parser.parse_args())
 print(args)
 truncate_size = args['truncate_size']
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
-test_size = 5
+test_size = args['test_size']
 voc_dir = args['voc_synth_dir']
 if not glob(voc_dir):
     os.mkdir(voc_dir)
 wav_dir = 'data/wavs_syn'
-model_path = 'data/model.torch'
 data_path = args['data']
 ratios = args['ratios']
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 val_rate = .10
 up_rate = np.prod(ratios)
-tb_dir = 'data/tensorboard'
+print(device)
+model_name = 'srnn_r{ratios}{ln}{res}{tf}'.format(
+    ratios='_'.join(map(str, args['ratios'])), ln=args['layer_norm'] * '_ln',
+    res=args['res'] * '_res', tf=args['schedl_samplg'] * '_tf')
+print(model_name)
+tb_dir = os.path.join('data/tensorboard', model_name)
+model_path = os.path.join('data', model_name + '.torch')
 for f in glob(os.path.join(tb_dir, '*')):
     os.remove(f)
-print(device)
 
 class MagPhaseLoss(nn.Module):
     def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_vuv=-2,
@@ -63,7 +69,6 @@ class MagPhaseLoss(nn.Module):
         self.dim_lf0 = dim_lf0
         self.dim_vuv = dim_vuv # dimension of voiced/unvoiced bool
         self.loss_type = loss_type
-        # self.get_mean = args['avg_loss']
 
     def forward(self, y, target):
         shape_assert(y, (self.B, -1, self.V))
@@ -140,9 +145,10 @@ def synth_model_wavs(model, i):
         os.remove(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))
     except FileNotFoundError:
         pass
-    os.system('./voc_extract.py -m synth -o --no_batch' + \
-              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i));
-    # return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)), dtype='int16')[0]
+    print(os.system('./voc_extract.py -m synth -o --no_batch' + \
+              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True))
+    print('./voc_extract.py -m synth -o --no_batch' + \
+              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i))
     return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
 
 def synth_gt_wavs(i):
@@ -155,10 +161,9 @@ def synth_gt_wavs(i):
     for gt, ft in zip(gt_split,  ['mag', 'real', 'imag', 'lf0']):
         write_binfile(gt, os.path.join(voc_dir,
                                        'ground_truth_{:05d}.{}'.format(i, ft)))
-    os.system('./voc_extract.py -m synth -o --no_batch -v {0} -w {1}'.format(voc_dir, wav_dir) + \
-              ' -F ground_truth_{0:05d}'.format(i));
+    os.system('./voc_extract.py -m synth -o --no_batch' + \
+              ' -v {0} -w {1} -F ground_truth_{2:05d}'.format(voc_dir, wav_dir, i))
     return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
-#                    dtype='int16')[0]
 
 if __name__ == "__main__":
     global voc_dic, voc_utt_idx, voc_mean, voc_std
@@ -188,6 +193,8 @@ if __name__ == "__main__":
         hid_up_size = 82,
         frame_size = frame_size,
         dropout = args['dropout'],
+        do_layernorm = args['layer_norm'],
+        do_res = args['res'],
         batch_size = batch_size)
     srnn.to(device)
     init_by_class[srnn.__class__](srnn)
@@ -201,11 +208,13 @@ if __name__ == "__main__":
                      sample_rate=sampling_rate,
                      global_step=0)
     id_loss = 0
+    teacher_forcing = 1
     for _e in range(1, epochs+1):
         srnn.init_states(batch_size = batch_size)
         losses = []
         start = time.time()
-        teacher_forcing = 1 - _e / epochs
+        if args['schedl_samplg']:
+            teacher_forcing = 1 - _e / epochs
         for x, tar in tqdm(train_loader):
             x, tar = x.to(device), tar.to(device)
             optimizer.zero_grad()

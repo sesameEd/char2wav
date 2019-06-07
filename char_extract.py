@@ -19,8 +19,8 @@ parser.add_argument('-t', '--titles', default='data/title/title.freq', type=str,
 parser.add_argument('-o', '--outdir', type=str, help='the directory to save output .hdf5 file, defaults to ./data')
 args = vars(parser.parse_args())
 do_align = True
-boundary_signs = dict(zip(['BOS', 'BOW', 'EOS', 'EOW'], map(str, range(4))))
-BOS, BOW, EOS, EOW = map(str, range(4))
+boundary_signs = dict(zip(['BOS', 'BOW', 'EOS', 'EOW'], map(str, range(1, 5))))
+BOS, BOW, EOS, EOW = map(str, range(1, 5))
 bndry_types = np.string_(['BOS', 'BOW', 'EOS', 'EOW'])
 
 vocab_file = args['dict']
@@ -52,10 +52,7 @@ def get_bow_eow(list_sents):
     return bow, eow
 
 def upper_or_lower(char):
-    # if char.isalpha():
     return 1 if char.isupper() else 0
-    # else:
-        # return 2
 
 def bin_annotate_1d(indices, len_of_array):
     arr = np.zeros(len_of_array)
@@ -94,7 +91,8 @@ if __name__ == "__main__":
 
     # get the indices of word and sentence boundaries, for now all are indexed by space-removed text
     if not os.path.isfile(tknzd_file):
-        print("Cannot find tokenized scripts in {0}, will assume {1} to be tokenized.".format(tknzd_file, script_file))
+        print("Cannot find tokenized scripts in {0}. Assuming {1} tokenized.".format(
+            tknzd_file, script_file))
         tknzd_file = script_file
         do_align = False
     with open(tknzd_file, 'r') as f:
@@ -112,12 +110,11 @@ if __name__ == "__main__":
                                 for ids in [bos_id, eos_id, bow_id, eow_id]], 0)
         assert ebows_inplace.shape == (utt_id[-1],), 'Error with annotating 1d-array'
         utt_id = shift_indices(utt_id, ebows_inplace)
-
     # get an invertible mapping between individual characters (including boundaries) and numeric indices
     with open(vocab_file, 'r') as f:
         chars = [re.sub(r'^\d+\t', '', kv).rstrip().lower() for kv in f]
     chars.remove('')
-    idx2char = dict(enumerate(sorted(boundary_signs.values()) + sorted(set(chars))))
+    idx2char = dict(enumerate(sorted(boundary_signs.values()) + sorted(set(chars)), 1))
     char2idx = reverse_dic(idx2char)
     char_types = np.string_(itemgetter(*sorted(idx2char.keys()))(idx2char))
 
@@ -128,25 +125,14 @@ if __name__ == "__main__":
         assert title_utts[-1] + 1 == len(utt_id)
     else:
         title_file = None
+    title_id = utt_id[title_utts]
 
     sents_with_bnd = [BOS + BOW + (EOW + BOW).join(sent.split(' ')) + EOW + EOS for sent in all_sents]
     sent_id = get_begin_ids(sents_with_bnd)
-    if not do_align:
-        utt_id = sent_id
-        seq_id = sent_id
-        seq_uttid = np.arange(utt_id.shape[0] + 1)
-    else:
-        # 'seq's, the intersect between (or LCM of) utterance boundary and sentence boundary, will be
-        # used as the main processing units, below is for extracting their indices and corresponding
-        # utterance indices.
-        seq_id = np.intersect1d(utt_id, sent_id)
-        seq_uttid = np.nonzero(np.in1d(utt_id, seq_id, assume_unique=True))
-    if title_file:
-        assert all(np.in1d(title_utts, seq_uttid))
-        title_id = utt_id[title_utts]
     cat_upr_indictr = np.array([upper_or_lower(i) for sent in sents_with_bnd for i in sent], dtype=int)
     cat_encoded_seq = np.array([char2idx[i.lower()] for sent in sents_with_bnd for i in sent], dtype=int)
-    assert cat_upr_indictr.shape == cat_encoded_seq.shape
+    shifted_bow_id = np.where(cat_encoded_seq == char2idx[BOW])[0]
+    shifted_eow_id = np.where(cat_encoded_seq == char2idx[EOW])[0]
 
     # to examine if the same sentence is reconstructed from encoded array
     test_reconstruct = True
@@ -154,19 +140,20 @@ if __name__ == "__main__":
         test_sid = np.random.randint(0, len(sent_id)-1, 3)
         for _i in test_sid:
             encoded_snt = cat_encoded_seq[sent_id[_i]:sent_id[_i+1]]
-            upper_indctr = cat_upr_indictr[sent_id[_i]:sent_id[_i+1]]
-            re_sent = arr2sent(encoded_snt, idx2char, i2bnd_dic=boundary_signs, up_indctr=upper_indctr)
+            is_upper = cat_upr_indictr[sent_id[_i]:sent_id[_i+1]]
+            re_sent = arr2sent(encoded_snt, idx2char, i2bnd_dic=boundary_signs, up_indctr=is_upper)
             assert re_sent.rstrip() == all_sents[_i], \
                 print('got reconstructed sentence: ', re_sent, '\nexpected:', all_sents[_i])
 
     with h5py.File(os.path.join(outdir, 'all_char.hdf5'), 'w') as f:
         f.create_dataset('char_types', data=char_types)
         f.create_dataset('bndry_types', data=bndry_types)
+        print(bndry_types, char_types)
         if title_file:
             f['title_id'] = title_id
-        f['seq_id'] = seq_id
-        # f.create_dataset('title_utts', data=title_utts)
-        # f.create_dataset('utt_id', data=utt_id)
-        # f.create_dataset('sent_id', data=sent_id)
+        f['utt_id'] = utt_id
+        f['bow_id'] = shifted_bow_id
+        f['eow_id'] = shifted_eow_id
+        f.create_dataset('sent_id', data=sent_id)
         f.create_dataset('cat_encoded_seq', data=cat_encoded_seq)
-        f.create_dataset('cat_upr_indictr', data=cat_upr_indictr)
+        f.create_dataset('cat_is_upper', data=cat_upr_indictr)
