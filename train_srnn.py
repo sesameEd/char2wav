@@ -17,19 +17,20 @@ from glob import glob
 import soundfile as sf
 import subprocess
 
-parser = argparse.ArgumentParser(
-    "-s | --sample_rnn, train sample_rnn"
-    )
+parser = argparse.ArgumentParser('script to train sample rnn with different hyper-parameter settings')
 parser.add_argument('--data', type=str, default='data/vocoder/all_vocoder.hdf5', help="default='data/vocoder/all_vocoder.hdf5'")
 parser.add_argument('-e', '--epochs', type=int, default=10, help='default=10')
 parser.add_argument('-B', '--batch_size', type=int, default=32, help='default=32')
-parser.add_argument('--truncate_size', type=int, default=512, help='default=512')
+parser.add_argument('--ts', '--truncate_size', type=int, dest='truncate_size', default=512, help='default=512')
 parser.add_argument('--lr', '--learning_rate', dest='learning_rate', type=float, default=4e-4, help='default=4e-4')
-parser.add_argument('--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')
+parser.add_argument('-v', '--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')
+parser.add_argument('-w', '--wav_dir', type=str, default='data/wavs_syn')
 parser.add_argument('-d', '--dropout', type=float, default=0.5, help='default=0.5')
 parser.add_argument('-R', '--ratios', type=int, nargs='*', default=[2, 2, 8], help='default=[2, 2, 8]')
 parser.add_argument('--ln', '--layer_norm', action='store_true', dest='layer_norm')
-parser.add_argument('--tf', '--schedl_samplg', action='store_true', dest='schedl_samplg')
+parser.add_argument('--ss', '--scheduled_sampling', action='store_true', dest='scheduled_sampling',
+                    help='whether to use scheduled sampling for training, this will override tf_rate')
+parser.add_argument('--tf', '--tf_rate', dest='tf_rate', type=float, default=1)
 parser.add_argument('--res', '--res_net', action='store_true', dest='res')
 parser.add_argument('-t', '--test_size', type=int, default=5)
 args = vars(parser.parse_args())
@@ -39,19 +40,20 @@ batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
 test_size = args['test_size']
+wav_dir = args['wav_dir']
 voc_dir = args['voc_synth_dir']
 if not glob(voc_dir):
     os.mkdir(voc_dir)
-wav_dir = 'data/wavs_syn'
 data_path = args['data']
 ratios = args['ratios']
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 val_rate = .10
 up_rate = np.prod(ratios)
 print(device)
-model_name = 'srnn_r{ratios}{ln}{res}{tf}'.format(
+model_name = 'srnn_r{ratios}{ln}{res}{ss}_tf{tf}'.format(
     ratios='_'.join(map(str, args['ratios'])), ln=args['layer_norm'] * '_ln',
-    res=args['res'] * '_res', tf=args['schedl_samplg'] * '_tf')
+    res=args['res'] * '_res', ss=args['scheduled_sampling'] * '_ss',
+    tf=args['tf_rate'])
 print(model_name)
 tb_dir = os.path.join('data/tensorboard', model_name)
 model_path = os.path.join('data', model_name + '.torch')
@@ -145,9 +147,9 @@ def synth_model_wavs(model, i):
         os.remove(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))
     except FileNotFoundError:
         pass
-    print(os.system('./voc_extract.py -m synth -o --no_batch' + \
-              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True))
-    print('./voc_extract.py -m synth -o --no_batch' + \
+    subprocess.check_output('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
+              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
+    print('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
               ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i))
     return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
 
@@ -208,12 +210,12 @@ if __name__ == "__main__":
                      sample_rate=sampling_rate,
                      global_step=0)
     id_loss = 0
-    teacher_forcing = 1
+    teacher_forcing = args['tf_rate']
     for _e in range(1, epochs+1):
         srnn.init_states(batch_size = batch_size)
         losses = []
         start = time.time()
-        if args['schedl_samplg']:
+        if args['scheduled_sampling']:
             teacher_forcing = 1 - _e / epochs
         for x, tar in tqdm(train_loader):
             x, tar = x.to(device), tar.to(device)

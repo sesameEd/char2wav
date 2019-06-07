@@ -7,8 +7,6 @@ import os
 from os import path
 import numpy as np
 import h5py
-# from scipy.interpolate import interp1d
-# from sklearn import preprocessing
 
 parser = argparse.ArgumentParser(
     "if '--mode' is 'extract' or not given, " +
