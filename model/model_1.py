@@ -123,9 +123,9 @@ if __name__ == "__main__":
 
     if test_char2v:
         c2v = Char2Voc(num_types=40, encoded_size = 256, decoded_size = 512).to(device)
-        c2v.gen_init(batch_size=9)
         x_ls = [torch.from_numpy(np.random.randint(1, 41, size=_i))
                 for _i in np.random.randint(10, size=10) if _i >= 2]
+        c2v.gen_init(batch_size=len(x_ls))
         x_in, lens_seq = R.pad_packed_sequence(
             R.pack_sequence(x_ls, enforce_sorted=False), batch_first=True)
         x_places = torch.arange(x_in.shape[1]).unsqueeze(0)
