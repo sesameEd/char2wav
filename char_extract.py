@@ -33,7 +33,7 @@ if not outdir:
     outdir = os.path.dirname(dir_name)
 
 def reverse_dic(input_dic):
-    return {v:k for k,v in input_dic.items()}
+    return {v: k for k, v in input_dic.items()}
 
 def get_begin_ids(list_sents):
     """
@@ -42,7 +42,7 @@ def get_begin_ids(list_sents):
     s.t. the individual sents can be indexed by concat_array[id[i]:id[i+1]]
     """
     lens = np.array([len(line) - line.count(' ') for line in list_sents])
-    return np.cumsum(np.insert(lens, 0, 0),0)
+    return np.cumsum(np.insert(lens, 0, 0), 0)
 
 def get_bow_eow(list_sents):
     lens = np.array([len(word) for sent in list_sents for word in sent.split(' ')])
@@ -73,9 +73,9 @@ def arr2sent(encoded_arr, i2c_dic, i2bnd_dic=None, up_indctr=None):
     :up_indctr the array where upper case letters are tagged '1' and otherwise (0 or 2) elsewhere
     """
     if up_indctr is not None:
-        _ids = np.where(up_indctr==1)[0]
+        _ids = np.where(up_indctr == 1)[0]
         _sent = ''.join(idx2char[c].upper() if i in _ids else idx2char[c]
-                       for i, c in enumerate(encoded_arr))
+                        for i, c in enumerate(encoded_arr))
     else:
         _sent = ''.join([i2c_dic[_] for _ in encoded_arr])
     if i2bnd_dic:
@@ -83,6 +83,7 @@ def arr2sent(encoded_arr, i2c_dic, i2bnd_dic=None, up_indctr=None):
         return _sent.replace(BOS + BOW, '').replace(EOW+EOS, '\n').replace(EOW+BOW, ' ',)
     else:
         return _sent
+
 
 if __name__ == "__main__":
     with open(script_file, 'r') as f:
@@ -104,7 +105,8 @@ if __name__ == "__main__":
     assert eos_id[-1] == eow_id[-1], 'did not get the right sentence or word boundaries'
     assert eos_id[-1] + 1 == utt_id[-1], 'index of last character does not accord'
     assert all(np.in1d(utt_id[:-1], bow_id, assume_unique=True)), \
-        'utts no. {} didn\'t start with word boundary.'.format(np.where(np.in1d(utt_id[:-1], bow_id)==False)[0])
+        'utts no. {} didn\'t start with word boundary.'.format(
+            np.where(np.in1d(utt_id[:-1], bow_id))[0])
     if do_align:
         ebows_inplace = np.sum([bin_annotate_1d(ids, utt_id[-1])
                                 for ids in [bos_id, eos_id, bow_id, eow_id]], 0)

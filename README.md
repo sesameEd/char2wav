@@ -14,7 +14,7 @@ source setup.sh
 *always* run this before any experiment.
 ### Preparing data
 <!-- *This part may be skipped if you wish to prepare your own data or have already extracted them in the format of hdf5.* -->
-The two shell scripts under directory `./misc` is responsible for pre-processing the data (exactly how will be specified below).
+The two shell scripts under directory `./libutils` is responsible for pre-processing the data (exactly how will be specified below).
 The python scripts `voc_extract.py` and `char_extract.py` are for extracting the numeric
 representations of the data (magphase vocoder features for audio files, and
 one-hot encoded character sequence for transcripts).
@@ -40,12 +40,12 @@ or refer to the helper documentation with `--help` flag.
 ```
 - to trim initial silence and to perform loudness normalization on audio files
 ```shell
-./misc/trim_audio_loudnorm.sh data/wav
+./libutils/trim_audio_loudnorm.sh data/wav
 ```
 The presumed sampling rate of the audios is 48000, if that's not the case for your
 files, specify the sampling rate with flag `-r` or `--sample_rate`:
 ```shell
-./misc/trim_audio_loudnorm.sh data/wav -r 48000
+./libutils/trim_audio_loudnorm.sh data/wav -r 48000
 ```
 <!-- - to perform loudness normalization on wav files (so the overall average perceived loudness of all audios are at the same level and the variation between from file to file is minimized), first make sure the following two dependencies: [`ffmpeg-normalize`](https://github.com/slhck/ffmpeg-normalize.git) and [`ffmpeg`](http://www.ffmpeg.org/) are successfully built and compiled with the `compile_tools.sh` scripts.
 to perform two-pass loudness normalization on the wavfiles from a directory `<input_wav_dir>`, run:
@@ -59,7 +59,7 @@ ffmpeg-normalize input/wav/dir/*.wav -ar $SAMPLE_RATE -f -of output/wav/dir -ext
 ```
 - to collect transcripts into one file and tokenize it
 ```shell
-./misc/collect_vocab_tokenize.sh
+./libutils/collect_vocab_tokenize.sh
 ```
 #### Extracting ground truth vocoder features
 - install vocoder dependency with

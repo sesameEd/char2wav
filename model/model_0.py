@@ -32,8 +32,8 @@ def to_onehot(idx, batch_shape, N_cat, padded=False):
 
     if padded:
         return torch.zeros(*batch_shape, N_cat+1).scatter_(
-                    -1, idx + torch.ones(1, 1).long(), 1.
-                ).transpose_(-1, 0)[1:].transpose_(-1, 0)
+            -1, idx + torch.ones(1, 1).long(), 1.
+        ).transpose_(-1, 0)[1:].transpose_(-1, 0)
     else:
         return torch.zeros(*batch_shape, N_cat).scatter_(-1, idx, 1.)
 

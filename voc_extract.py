@@ -116,6 +116,7 @@ def mask_scale_mpl(voc_arr, lf0_dim=-1, critr=np.exp):
     _m, _s = concat_zip([mp_ms, lf_ms], ax=0)
     return _m, _s, vuv, (voc_arr - _m) / _s
 
+
 if __name__ == '__main__':
     do_parallelize = args['no_batch']   # False if the flag is activated, otherwise True
     files = glob(indir + '/*')
@@ -144,7 +145,7 @@ if __name__ == '__main__':
         sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
         assert all_voc.shape[0] == sent_idx[-1]
         if args['overwrite'] or (not glob(os.path.join(outdir, 'all_vocoder.hdf5'))):
-            with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'w') as f:
+            with h5py.File(os.path.join(outdir, '..', 'all_vocoder.hdf5'), 'w') as f:
                 f['voc_utt_idx'] = sent_idx
                 f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_voc)
                 f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
@@ -153,7 +154,7 @@ if __name__ == '__main__':
                 print(sent_idx[-1], f['voc_scaled_cat'].shape,
                       f['voc_mean'][-1], f['voc_std'][-1])
         else:
-            with h5py.File(os.path.join(outdir, 'all_vocoder.hdf5'), 'a') as f:
+            with h5py.File(os.path.join(outdir, '..', 'all_vocoder.hdf5'), 'a') as f:
                 voc_dic = {k: np.array(f.pop(k)) for k in f.keys()}
                 b4_uid, ending_id = np.split(voc_dic['voc_utt_idx'], [-1])
                 f['voc_utt_idx'] = np.concatenate([b4_uid, sent_idx + ending_id])

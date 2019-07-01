@@ -6,8 +6,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-vocoder/
-wavs_syn/
+.vscode
 .ipynb_checkpoints/
 data/
 misc/test_getopt.sh
@@ -22,3 +21,5 @@ misc/test_getopt.sh
 *.swo
 *.est
 stanford-corenlp-full-2018-02-27
+*.log
+*.zip

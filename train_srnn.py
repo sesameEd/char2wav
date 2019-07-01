@@ -4,13 +4,16 @@ import h5py
 import math
 import numpy as np
 import os
+from operator import itemgetter
 import torch
-import time
+# import time
 import torch.optim as optim
 import torch.utils.data as data
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+
+from libutils import MagPhaseLoss, write_binfile
 from model import init_by_class, shape_assert, SampleRNN
 from tqdm import tqdm
 from glob import glob
@@ -61,28 +64,6 @@ model_path = os.path.join('data', model_name + '.torch')
 for f in glob(os.path.join(tb_dir, '*')):
     os.remove(f)
 
-class MagPhaseLoss(nn.Module):
-    def __init__(self, batch_size, vocoder_size=82, dim_lf0=-1, dim_vuv=-2,
-                 loss_type=F.l1_loss):
-        """loss_type must be a contiguous loss (instead of a categorical one),
-                     must be of nn.functional class (instead of nn.Module) """
-        super(MagPhaseLoss, self).__init__()
-        self.B = batch_size
-        self.V = vocoder_size
-        self.dim_lf0 = dim_lf0
-        self.dim_vuv = dim_vuv # dimension of voiced/unvoiced bool
-        self.loss_type = loss_type
-
-    def forward(self, y, target):
-        shape_assert(y, (self.B, -1, self.V))
-        _B, _T, _V = y.shape
-        shape_assert(target, (_B, _T, _V))
-        y_mp, y_vuv, y_lf  = y.split((80, 1, 1), dim=-1)
-        tar_mp, tar_vuv, tar_lf = target.split((80, 1, 1), dim=-1)
-        loss_mp = self.loss_type(y_mp, tar_mp, reduction='none').sum(-1).sum(1).mean()
-        loss_v = (tar_vuv * y_vuv.log()).sum(-1).sum(1).mean()
-        loss_l = (self.loss_type(y_lf, tar_lf, reduction='none') * tar_vuv).sum(-1).sum(1).mean()
-        return loss_mp - loss_v + loss_l
 
 def split_2d(tensor_2d, chunk_size, pad_val=0):
     """splits tensor_2d into equal-sized, padded sequences and deals with
@@ -123,16 +104,13 @@ class StatefulSampler(data.Sampler):
     def __len__(self):
         return self.num_batch
 
-def write_binfile(m_data, filename):
-    m_data = np.array(m_data.cpu(), 'float32') # Ensuring float32 output
-    fid = open(filename, 'wb')
-    m_data.tofile(fid)
-    fid.close()
-    return
 
-def synth_model_wavs(model, i):
-    gt_vocoder = voc_dic['voc_scaled_cat'][voc_utt_idx[i]:voc_utt_idx[i+1]]
+def synth_model_wavs(model, i, vocoder_dic):
+    voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
+        'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')(vocoder_dic)
+    gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
     inp = gt_vocoder[::up_rate, :].unsqueeze(0).to(device)
+    model.eval()
     with torch.no_grad():
         out_vocoder = model(
             torch.zeros(gt_vocoder.shape, device=device).unsqueeze_(1),
@@ -148,32 +126,33 @@ def synth_model_wavs(model, i):
         os.remove(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))
     except FileNotFoundError:
         pass
-    subprocess.check_output('./voc_extract.py -m synth -o --no_batch' + \
-              ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
-    # print('/mnt/d/NNML/char2wav/voc_extract.py -m synth -o --no_batch' + \
-    #           ' -v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i))
+    subprocess.check_output('./voc_extract.py -m synth -o --no_batch ' +
+        '-v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
     return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
 
-def synth_gt_wavs(i):
-    gt_vocoder = voc_dic['voc_scaled_cat'][voc_utt_idx[i]:voc_utt_idx[i+1]]
+def synth_gt_wavs(i, vocoder_dic):
+    voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
+        'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')(vocoder_dic)
+    gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
     gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
     assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
             'wrong dimension for voicedness '
     gt_magphase[:, -1][(1 - gt_vocoder[:, -2]).byte()] = -1.0e+10
     gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
-    for gt, ft in zip(gt_split,  ['mag', 'real', 'imag', 'lf0']):
+    for gt, ft in zip(gt_split, ['mag', 'real', 'imag', 'lf0']):
         write_binfile(gt, os.path.join(voc_dir,
                                        'ground_truth_{:05d}.{}'.format(i, ft)))
-    os.system('./voc_extract.py -m synth -o --no_batch' + \
+    os.system('./voc_extract.py -m synth -o --no_batch' +
               ' -v {0} -w {1} -F ground_truth_{2:05d}'.format(voc_dir, wav_dir, i))
     return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
 
+
 if __name__ == "__main__":
-    global voc_dic, voc_utt_idx, voc_mean, voc_std
+    # global voc_dic, voc_utt_idx, voc_mean, voc_std
     with h5py.File(data_path, 'r') as f:
         voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
     voc_utt_idx = voc_dic['voc_utt_idx']
-    voc_mean, voc_std = voc_dic['voc_mean'], voc_dic['voc_std']
+    # voc_mean, voc_std = voc_dic['voc_mean'], voc_dic['voc_std']
     sampling_rate = voc_dic.get('sampling_rate', 48000)
     test_ids = torch.randint(len(voc_utt_idx) - 1, (test_size,))
 
@@ -208,7 +187,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(srnn.parameters(), lr=learning_rate)
     tb = SummaryWriter(log_dir=tb_dir)
     for _i in test_ids:
-        tb.add_audio('wav{:05d}/ground_truth'.format(_i), synth_gt_wavs(_i),
+        tb.add_audio('wav{:05d}/ground_truth'.format(_i), synth_gt_wavs(_i, voc_dic),
                      sample_rate=sampling_rate,
                      global_step=0)
     id_loss = 0
@@ -216,7 +195,7 @@ if __name__ == "__main__":
     for _e in range(1, epochs+1):
         srnn.init_states(batch_size = batch_size)
         losses = []
-        start = time.time()
+        # start = time.time()
         if args['scheduled_sampling']:
             teacher_forcing = 1 - _e / epochs
         for x, tar in tqdm(train_loader):
@@ -250,7 +229,7 @@ if __name__ == "__main__":
         srnn.init_states(batch_size=1)
         for _i in test_ids:
             tb.add_audio('wav{:05}/model'.format(_i),
-                         synth_model_wavs(srnn, _i),
+                         synth_model_wavs(srnn, _i, voc_dic),
                          global_step=id_loss,
                          sample_rate=sampling_rate)
 

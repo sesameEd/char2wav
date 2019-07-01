@@ -63,7 +63,7 @@ while true; do
     esac
 done
 
-pip install --user -r requirements.txt
+# pip install --user -r requirements.txt
 
 if [ "$GET_MAGPHASE" = true ]; then
   echo ===============================compiling magphase=============================
@@ -89,8 +89,9 @@ if [ "$GET_FFMPEG" = true ]; then
   echo ================================compiling ffmpeg==============================
   git submodule update --init ffmpeg
   cd ffmpeg
-  ./configure --disable-ffplay --disable-ffprobe --disable-avdevice --disable-avcodec \
-    --disable-avformat --disable-swresample --disable-swscale --disable-postproc
+  ./configure --disable-ffplay --disable-ffprobe --disable-avdevice \
+    --disable-avcodec --disable-avformat --disable-swresample \
+    --disable-swscale --disable-postproc --prefix=/home/sesame/.local/bin
   if [ $? -eq 0 ]; then
     echo if you received error message concerning \"yasm\", run \"sudo apt-get install yasm\" and retry
   fi

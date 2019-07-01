@@ -40,12 +40,12 @@ while true; do
         normalize)
           TRIM=false
           ;;
-        both)
+        all)
           TRIM=true
           NORMALIZE=true
           ;;
         *)
-          echo mode must be one of below: trim, normalize
+          echo mode must be one of below: trim, normalize, or all
           ;;
         esac
       shift 2
