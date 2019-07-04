@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import argparse
 import re
 import h5py
@@ -145,7 +145,7 @@ if __name__ == "__main__":
             is_upper = cat_upr_indictr[sent_id[_i]:sent_id[_i+1]]
             re_sent = arr2sent(encoded_snt, idx2char, i2bnd_dic=boundary_signs, up_indctr=is_upper)
             assert re_sent.rstrip() == all_sents[_i], \
-                print('got reconstructed sentence: ', re_sent, '\nexpected:', all_sents[_i])
+                ('got reconstructed sentence: ', re_sent, '\nexpected:', all_sents[_i])
 
     with h5py.File(os.path.join(outdir, 'all_char.hdf5'), 'w') as f:
         f.create_dataset('char_types', data=char_types)

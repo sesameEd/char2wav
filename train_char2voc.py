@@ -6,11 +6,12 @@ from itertools import repeat
 import numpy as np
 import torch
 # import torch.optim as optim
-# import torch.utils.data as data
+import torch.utils.data as data
 import torch.nn as nn
 import torch.nn.functional as F
-# from torch.utils.tensorboard import SummaryWriter
-from libutils import shape_assert, write_binfile
+import torch.nn.utils.rnn as R
+from torch.utils.tensorboard import SummaryWriter
+from utils import shape_assert, write_binfile
 from model import init_by_class, Char2Voc
 from operator import itemgetter
 import os
@@ -24,6 +25,7 @@ parser.add_argument('-d', '--voc_data', type=str, default='data/all_vocoder.hdf5
 parser.add_argument('-v', '--voc_synth_dir', type=str, default='data/synth_voc/', help='default=\'data/synth_voc/\'')
 parser.add_argument('-w', '--wav_dir', type=str, default='data/wavs_syn')
 
+parser.add_argument('-H', '--hid_size', type=int, default=256)
 parser.add_argument('-E', '--epochs', type=int, default=10, help='default=10')
 parser.add_argument('-B', '--batch_size', type=int, default=32, help='default=32')
 parser.add_argument('-L', '--learning_rate', dest='learning_rate', type=float, default=4e-4, help='default=4e-4')
@@ -44,12 +46,14 @@ if not glob(voc_dir):
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
-val_rate = .10
+val_rate = .05
 test_size = args['test_size']
-model_name = 'srnn_r{init}{ss}_tf{tf}'.format(
+model_name = 'char2v_en{en}_b{bt}{init}{ss}_tf{tf}{dp}'.format(
     init=args['init'] * '_init',
     ss=args['scheduled_sampling'] * '_ss',
-    tf=args['tf_rate'])
+    tf=args['tf_rate'],
+    dp=args['dropout'], 
+    bt=args['batch_size'])
 tb_dir = os.path.join('data/tensorboard', model_name)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -61,40 +65,33 @@ def get_mask(len_seq, r_mask, beginning_ids, end_ids):
         seq_mask[beginning_ids[_i]:end_ids[_i]] = 1
     return seq_mask
 
-# def split_1d_cat_index(cat_seq, index):
-#     shape_assert(cat_seq, (index[-1], ))
-#     len_slices = index[1:] - index[:-1]
-#     return torch.split(cat_seq, list(len_slices))
-#     # return [cat_seq[index[_i]:index[_i+1]] for _i in range(len(index)-1)]
+def bipart_dataset(complete_set, split_index):
+    return (data.Subset(complete_set, range(split_index)),
+            data.Subset(complete_set, range(split_index, len(complete_set))))
 
-def synth_char2wav(char2voc_model, inp, i, vocoder_dic):
-    voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
-        'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')(vocoder_dic)
+def synth_char2wav(char2voc_model, inp, i):
     gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
     char2voc_model.eval()
     with torch.no_grad():
-        out_vocoder = char2voc_model(
-            torch.zeros(gt_vocoder.shape, device=device).unsqueeze_(1),
-            inp.transpose(0, 1))[1].transpose(0, 1).squeeze()
+        out_vocoder = char2voc_model(inp,
+            torch.zeros(gt_vocoder.shape, device=device).unsqueeze_(1))[1].transpose(0, 1).squeeze()
     out_voiced = torch.bernoulli(out_vocoder[:, -2])
     out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std.to(device) + voc_mean.to(device)
     out_magphase[:, -1][(1 - out_voiced).byte()] = -1.0e+10
     out_split = torch.split(out_magphase, [60, 10, 10, 1], dim=1)
     for out, ft in zip(out_split, ['mag', 'real', 'imag', 'lf0']):
         write_binfile(out, os.path.join(voc_dir,
-                                        'srnn_{:05d}.{}'.format(i, ft)))
+                                        'char2v_{:05d}.{}'.format(i, ft)))
     try:
-        os.remove(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))
+        os.remove(os.path.join(wav_dir, 'char2v_{0:05d}.wav'.format(i)))
     except FileNotFoundError:
         pass
     subprocess.check_output('./voc_extract.py -m synth -o --no_batch ' +
-        '-v {0} -w {1} -F srnn_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
-    return sf.read(os.path.join(wav_dir, 'srnn_{0:05d}.wav'.format(i)))[0]
+        '-v {0} -w {1} -F char2v_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
+    return sf.read(os.path.join(wav_dir, 'char2v_{0:05d}.wav'.format(i)))[0]
 
 
-def synth_gt_wavs(i, vocoder_dic):
-    voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
-        'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')(vocoder_dic)
+def synth_gt_wavs(i):
     gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
     gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
     assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
@@ -109,7 +106,71 @@ def synth_gt_wavs(i, vocoder_dic):
     return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
 
 
+class VariLenDataset(data.Dataset):
+    """takes lists of tensors of variable lengths as
+    Each sample will be retrieved by indexing lists.
+    list(char_seq), list(voc_seq), tensor(char_lens)(, list(upper_case))
+    """
+    def __init__(self, *ls_cases):
+        assert all(len(ls_cases[0]) == len(case) for case in ls_cases), \
+            "All lists should have the same number of training cases!"
+        self.ls_cases = ls_cases
+    
+    def __getitem__(self, index):
+        return tuple(case[index] for case in self.ls_cases)
+
+    def __len__(self):
+        return len(self.ls_cases[0])
+
+class LenGroupedSampler(data.Sampler):
+    def __init__(self, lens):
+        """lens is a torch.tensor where the length of each sequence is stored"""
+        self.sorted_ids = torch.argsort(lens)
+        
+    def __iter__(self):
+        return iter(self.sorted_ids)
+
+    def __len__(self):
+        return self.sorted_ids.shape[0]
+
+class PaddedBatch:
+    def __init__(self, data):
+        """expects data = [char_seq, voc_seq, char_lens(, upper_case)]
+        each being a batch.  """
+        transposed_data = list(zip(*data))
+        self.char = R.pad_sequence(transposed_data[0], batch_first=True)
+        self.voc = R.pad_sequence(transposed_data[1], batch_first=True)
+        inp_places = torch.arange(self.char.shape[1]).unsqueeze(0)
+        self.in_mask = inp_places < torch.stack(transposed_data[2]).unsqueeze(1)
+        try:
+            self.upper = R.pad_sequence(transposed_data[3], batch_first=True)
+        except IndexError:
+            self.upper = None
+
+    def pin_memory(self):
+        self.char = self.char.pin_memory()
+        self.voc = self.voc.pin_memory()
+        self.in_mask = self.in_mask.pin_memory()
+        if self.upper is not None:
+            self.upper = self.upper.pin_memory()
+        return self
+
+
+def collate_wrapper(batch):
+    return PaddedBatch(batch)
+
+
 if __name__ == '__main__':
+    # load vocoder array data
+    with h5py.File(voc_path, 'r') as f:
+        voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
+    global voc_cat, voc_uid, voc_mean, voc_std
+    voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
+        'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')
+    lens_voc = voc_uid[1:] - voc_uid[:-1]
+    sampling_rate = voc_dic.get('sampling_rate', 48000)
+    voc_case = torch.split(voc_cat, lens_voc, dim=0)
+
     # load character array data
     with h5py.File(char_path, 'r') as f:
         char_dic = {k: np.array(v) for k, v in f.items()}
@@ -118,18 +179,32 @@ if __name__ == '__main__':
     n_type = char_dic['char_types'].shape[0]
     bow_id, eow_id, cat_char_seq, cat_upper_seq, utt_id = \
         [torch.from_numpy(_t.astype(int)) for _t in char_ls]
-    assert all(cat_char_seq.nonzero()), 'encoding needs to start from 1, not 0'  # unpadded encoded arr should not contain 0
-    lens_seq = utt_id[1:] - utt_id[:-1]
     # loss_mask = get_mask(cat_char_seq.shape[0], mask_rate, bow_id, eow_id)
-    # char_case, up_case, mask_case = map(torch.split,
-    #     [cat_char_seq, cat_upper_seq, loss_mask], repeat(len(lens_seq)))
-    char_case, up_case = map(torch.split, [cat_char_seq, cat_upper_seq], 
+    assert all(cat_char_seq.nonzero()), 'encoding needs to start from 1, not 0'  # unpadded encoded arr should not contain 0
+    lens_seq = (utt_id[1:] - utt_id[:-1])
+    char_case, up_case = map(torch.split, [cat_char_seq, cat_upper_seq],
                              repeat(lens_seq))
+    used_size = len(voc_case)
+    all_data = VariLenDataset(char_case[:used_size], voc_case,
+                              lens_seq[:used_size], up_case[:used_size])
     
-    with h5py.File(voc_path, 'r') as f:
-        voc_dic = {k: torch.from_numpy(np.array(v)) for k, v in f.items()}
-    voc_utt_id, voc_cat = itemgetter('voc_utt_idx', 'voc_scaled_cat')
-    lens_voc = voc_utt_id[1:] - voc_utt_id[:-1]
-    voc_case = torch.split(voc)
+    # split train, val set; and group batches by lengths
+    train_size = np.ceil(used_size * (1 - val_rate)).astype(int)
+    train_set, val_set = bipart_dataset(all_data, train_size)
+    train_samp, val_samp = map(LenGroupedSampler, 
+                               [lens_voc[:train_size], lens_voc[train_size:]])
+    train_loader = data.DataLoader(train_set, batch_size=batch_size,
+                                   sampler=train_samp, collate_fn=collate_wrapper)
+    val_loader = data.DataLoader(val_set, batch_size=batch_size,
+                                 sampler=val_samp, collate_fn=collate_wrapper)
+    
+    # synthesize ground truth wavs
+    test_ids = torch.randint(train_size, used_size, (test_size))
+    tb = SummaryWriter(log_dir=tb_dir)
+    for _i in test_ids:
+        tb.add_audio('wav{:05d}/ground_truth'.format(_i), synth_gt_wavs(_i),
+                     sample_rate=sampling_rate,
+                     global_step=0)
 
+    
     char2voc = Char2Voc(n_type, )

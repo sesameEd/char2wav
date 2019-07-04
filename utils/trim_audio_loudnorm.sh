@@ -100,7 +100,7 @@ fi
 if [ "$NORMALIZE" = true ]; then
   if [ "$TRIM" = true ]; then
     echo overwriting trimmed audio with normalized ones
-    ffmpeg-normalize $wavdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav
+    ffmpeg-normalize $outdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav
   else
     ffmpeg-normalize $wavdir/*.wav -ar $SAMPLE_RATE -f -of $outdir -ext wav; fi
 fi

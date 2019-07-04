@@ -13,7 +13,7 @@ import torch.nn as nn
 # import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from libutils import MagPhaseLoss, write_binfile
+from utils import MagPhaseLoss, write_binfile
 from model import init_by_class, shape_assert, SampleRNN
 from tqdm import tqdm
 from glob import glob

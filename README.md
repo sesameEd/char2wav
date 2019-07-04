@@ -7,6 +7,9 @@ if you want to install only some parts of the dependencies, run `./compile_tools
 to get options. It'll also be reminded when using some function from that package.   
 - To download and install PyTorch (must!), visit [pytorch instruction](https://pytorch.org/get-started/locally/
 ) for the version that's suitable for you (options include: python version, OS, CUDA version, etc.).
+```shell
+pip install future tb-nightly soundfile numpy
+```
 - To set up environment:
 ```shell
 source setup.sh

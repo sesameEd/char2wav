@@ -68,6 +68,8 @@ done
 if [ "$GET_MAGPHASE" = true ]; then
   echo ===============================compiling magphase=============================
   git submodule update --init magphase
+  pip2 install --user numpy scipy soundfile  # matplotlib
+  pip3 install --user h5py soundfile 
   cd magphase/tools
   ./download_and_compile_tools.sh
   cd ../../
@@ -89,9 +91,9 @@ if [ "$GET_FFMPEG" = true ]; then
   echo ================================compiling ffmpeg==============================
   git submodule update --init ffmpeg
   cd ffmpeg
-  ./configure --disable-ffplay --disable-ffprobe --disable-avdevice \
-    --disable-avcodec --disable-avformat --disable-swresample \
-    --disable-swscale --disable-postproc --prefix=/home/sesame/.local/bin
+  ./configure --disable-ffplay --disable-ffprobe --disable-avdevice --disable-avcodec \
+    --disable-swresample --disable-swscale --disable-postproc --disable-pixelutils \
+    --enable-filter=ebur128 --enable-filter=loudnorm --prefix=~/.local/
   if [ $? -eq 0 ]; then
     echo if you received error message concerning \"yasm\", run \"sudo apt-get install yasm\" and retry
   fi
@@ -108,5 +110,3 @@ if [ "$GET_FMN" = true ]; then
   cd ffmpeg-normalize
   pip install --user .
 fi
-
-# source setup.sh

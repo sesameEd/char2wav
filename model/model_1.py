@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.nn.utils.rnn as R
 import torch.nn.functional as F
-from libutils import shape_assert
+from utils import shape_assert
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def print_torchtsr(a):
