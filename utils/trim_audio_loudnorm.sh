@@ -37,7 +37,7 @@ while true; do
         trim)
           NORMALIZE=false
           ;;
-        normalize)
+        loudnorm)
           TRIM=false
           ;;
         all)
@@ -45,7 +45,7 @@ while true; do
           NORMALIZE=true
           ;;
         *)
-          echo mode must be one of below: trim, normalize, or all
+          echo mode must be one of below: trim, loudnorm, or all
           ;;
         esac
       shift 2

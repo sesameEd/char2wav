@@ -117,6 +117,7 @@ if __name__ == "__main__":
         chars = [re.sub(r'^\d+\t', '', kv).rstrip().lower() for kv in f]
     chars.remove('')
     idx2char = dict(enumerate(sorted(boundary_signs.values()) + sorted(set(chars)), 1))
+    print(idx2char)
     char2idx = reverse_dic(idx2char)
     char_types = np.string_(itemgetter(*sorted(idx2char.keys()))(idx2char))
 
@@ -148,9 +149,9 @@ if __name__ == "__main__":
                 ('got reconstructed sentence: ', re_sent, '\nexpected:', all_sents[_i])
 
     with h5py.File(os.path.join(outdir, 'all_char.hdf5'), 'w') as f:
-        f.create_dataset('char_types', data=char_types)
-        f.create_dataset('bndry_types', data=bndry_types)
-        print(bndry_types, char_types)
+        f.create_dataset('char_types', data=char_types, dtype="S1")
+        f.create_dataset('bndry_types', data=bndry_types, dtype='S3')
+        # print(bndry_types.dtype)
         if title_file:
             f['title_id'] = title_id
         f['utt_id'] = utt_id

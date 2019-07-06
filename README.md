@@ -8,7 +8,7 @@ to get options. It'll also be reminded when using some function from that packag
 - To download and install PyTorch (must!), visit [pytorch instruction](https://pytorch.org/get-started/locally/
 ) for the version that's suitable for you (options include: python version, OS, CUDA version, etc.).
 ```shell
-pip install future tb-nightly soundfile numpy
+pip install future tb-nightly soundfile numpy h5py tqdm
 ```
 - To set up environment:
 ```shell

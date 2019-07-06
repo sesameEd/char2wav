@@ -72,9 +72,6 @@ class Char2Voc(nn.modules.Module):
         self.upper_in = kwargs.get('upper_in', False)
         num_embd = self.E-1 if self.upper_in else self.E
         self.embedding = nn.Embedding(num_types+1, num_embd, padding_idx=0)
-        # if self.upper_in:
-        # else:
-        #     self.embedding = nn.Embedding(num_types+1, self.E, padding_idx=0)
         self.y0 = nn.Parameter(torch.rand(1, self.G), requires_grad=True)
         self.encoder = nn.GRU(self.E, encoded_size, bidirectional=True, batch_first=True)
         self.attention = Attention(2 * encoded_size + decoded_size, self.K)
@@ -93,7 +90,7 @@ class Char2Voc(nn.modules.Module):
             shape_assert(upper_case, (_B, _T))
             assert self.upper_in, ("did not expect upper_tensor, re-initialize "
                                    "model with kwarg 'upper_in' switched on")
-            x_embd = torch.cat(upper_case.unsqueeze(dim=-1), x_embd)
+            x_embd = torch.cat((upper_case.unsqueeze(dim=-1).float(), x_embd), dim=2)
         encoded = self.encoder(x_embd)[0]  # of shape (_B, _T, 2 * _H)
         res = [self.y_pre]
         attn_val = encoded[:, 0, :]
@@ -171,7 +168,7 @@ if __name__ == "__main__":
 
     if test_char2v:
         c2v = Char2Voc(num_types=40, encoded_size=256, decoded_size=512).to(device)
-        init_by_class.get(c2v.__class__, init_Module)(c2v)        
+        init_by_class.get(c2v.__class__, init_Module)(c2v)
         print("running test Char2Voc model...")
         x_ls = [torch.from_numpy(np.random.randint(1, 41, size=_i))
                 for _i in np.random.randint(10, size=10) if _i >= 2]
@@ -181,8 +178,8 @@ if __name__ == "__main__":
             R.pack_sequence(x_ls, enforce_sorted=False), batch_first=True)
         x_places = torch.arange(x_in.shape[1]).unsqueeze(0)
         pad_mask = x_places < lens_seq.unsqueeze(-1)
-        print(pad_mask)
-        y_pre = c2v(var(x_in), var(rand_voc), input_mask=var(pad_mask), tf_rate=1)
+        # print(pad_mask)
+        y_pre = c2v(var(x_in), var(rand_voc), input_mask=var(pad_mask), tf_rate=.5)
         assert y_pre.shape == rand_voc.shape, "expected output shape {0}, got {1}".format(
             rand_voc.shape, y_pre.shape)
         print("Char2Voc model with attention ran without error!")
