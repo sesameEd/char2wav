@@ -31,10 +31,12 @@ class MagPhaseLoss(nn.Module):
         self.dim_vuv = dim_vuv  # dimension of voiced/unvoiced bool
         self.loss_type = loss_type
 
-    def forward(self, y, target):
+    def forward(self, y, target, loss_mask=None):
         shape_assert(y, (self.B, -1, self.V))
         _B, _T, _V = y.shape
         shape_assert(target, (_B, _T, _V))
+        # if loss_mask is None:
+        #     loss_mask = torch.ones(target.shape)
         y_mp, y_vuv, y_lf = y.split((80, 1, 1), dim=-1)
         tar_mp, tar_vuv, tar_lf = target.split((80, 1, 1), dim=-1)
         loss_mp = self.loss_type(y_mp, tar_mp, reduction='none').sum(-1).sum(1).mean()

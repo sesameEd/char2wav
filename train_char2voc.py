@@ -15,8 +15,6 @@ from utils import write_binfile, MagPhaseLoss
 from model import init_by_class, Char2Voc
 from operator import itemgetter
 import os
-import soundfile as sf
-# import scipy.io.wavfile as wf
 import subprocess
 from tqdm import tqdm
 
@@ -35,10 +33,13 @@ parser.add_argument('-T', '--test_size', type=int, default=5)
 parser.add_argument('--ss', '--scheduled_sampling', action='store_true', dest='scheduled_sampling',
                     help='whether to use scheduled sampling for training, this will override tf_rate')
 parser.add_argument('--tf', '--tf_rate', dest='tf_rate', type=float, default=1)
-parser.add_argument('--frac', nargs='?', const=40, default=None)
+parser.add_argument('--frac', nargs='?', const=40, default=None, type=int)
 parser.add_argument('--init', action='store_true')
+parser.add_argument('--no_voice', action='store_true', default=False)
 args = vars(parser.parse_args())
 
+if not args['no_voice']:
+    import soundfile as sf
 char_path = args['char_data']
 voc_path = args['voc_data']  # path to the training data, not to vocoder folder
 wav_dir = args['wav_dir']
@@ -48,9 +49,9 @@ if not glob(voc_dir):
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
-val_rate = .1
+val_rate = .05
 test_size = args['test_size']
-encoded_size = 128
+encoded_size = args['hid_size']
 embedding_size = 32
 model_name = 'char2v_en{en}_b{bt}{init}{ss}_tf{tf}{dp}'.format(
     init=args['init'] * '_init',
@@ -80,8 +81,9 @@ def synth_scaled(out_vocoder, i):
     # char2voc_model.eval()
     # with torch.no_grad():
     #     out_vocoder = char2voc_model(
-    #             inp, torch.zeros(gt_vocoder.shape, device=device), 
+    #             inp, torch.zeros(gt_vocoder.shape, device=device),
     #         )[1].transpose(0, 1).squeeze()
+    # print(out_vocoder[:, -2].shape, out_vocoder.shape)
     out_voiced = torch.bernoulli(out_vocoder[:, -2])
     out_magphase = out_vocoder[:, list(range(80))+[81]] * voc_std.to(device) \
                    + voc_mean.to(device)
@@ -95,8 +97,8 @@ def synth_scaled(out_vocoder, i):
     if glob(wav_file):
         os.remove(wav_file)
     subprocess.check_output('./voc_extract.py -m synth -o --no_batch -F ' + wav_tkn +
-                            '-v {0} -w {1}'.format(voc_dir, wav_dir), shell=True)
-    return sf.read(wav_file)[1]
+                            ' -v {0} -w {1}'.format(voc_dir, wav_dir), shell=True)
+    return sf.read(wav_file)[0]
 
 
 def synth_gt_wavs(i):
@@ -111,13 +113,13 @@ def synth_gt_wavs(i):
                                        'ground_truth_{:05d}.{}'.format(i, ft)))
     os.system('./voc_extract.py -m synth -o --no_batch' +
               ' -v {0} -w {1} -F ground_truth_{2:05d}'.format(voc_dir, wav_dir, i))
-    return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[1]
+    return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
 
 
 class VariLenDataset(Dataset):
     """takes lists of tensors of variable lengths as
     Each sample will be retrieved by indexing lists.
-    list(char_seq), list(voc_seq), tensor(char_lens)(, list(upper_case))
+    list(char_seq), list(voc_seq), tensor( )(, list(upper_case))
     """
     def __init__(self, *ls_cases):
         assert all(len(ls_cases[0]) == len(case) for case in ls_cases), \
@@ -134,7 +136,7 @@ class LenGroupedSampler(Sampler):
     def __init__(self, lens):
         """lens is a torch.tensor where the length of each sequence is stored"""
         self.sorted_ids = torch.argsort(lens)
-        
+
     def __iter__(self):
         return iter(self.sorted_ids)
 
@@ -143,15 +145,17 @@ class LenGroupedSampler(Sampler):
 
 class PaddedBatch:
     def __init__(self, data):
-        """expects data = [char_seq, voc_seq, char_lens(, upper_case)]
+        """expects data = [char_seq, voc_seq, char_lens, voc_lens(, upper_case)]
         each being a batch.  """
         transposed_data = list(zip(*data))
         self.char = R.pad_sequence(transposed_data[0], batch_first=True)
         self.voc = R.pad_sequence(transposed_data[1], batch_first=True)
         inp_places = torch.arange(self.char.shape[1]).unsqueeze(0)
         self.in_mask = inp_places < torch.stack(transposed_data[2]).unsqueeze(1)
+        voc_places = torch.arange(self.voc.shape[1]).unsqueeze(0)
+        self.voc_mask = voc_places < torch.stack(transposed_data[3]).unsqueeze(1)
         try:
-            self.upper = R.pad_sequence(transposed_data[3], batch_first=True)
+            self.upper = R.pad_sequence(transposed_data[4], batch_first=True)
         except IndexError:
             self.upper = None
 
@@ -159,6 +163,7 @@ class PaddedBatch:
         self.char = self.char.pin_memory()
         self.voc = self.voc.pin_memory()
         self.in_mask = self.in_mask.pin_memory()
+        self.voc_mask = self.voc_mask.pin_memory()
         if self.upper is not None:
             self.upper = self.upper.pin_memory()
         return self
@@ -193,28 +198,29 @@ if __name__ == '__main__':
                              repeat(torch.unbind(lens_seq)))
     used_size = len(voc_case) if args['frac'] is None else args['frac']
     all_data = VariLenDataset(char_case[:used_size], voc_case[:used_size],
-                              lens_seq[:used_size], up_case[:used_size])
-    
+                              lens_seq[:used_size], lens_voc[:used_size], up_case[:used_size])
+
     # split train, val set; and group batches by lengths
     train_size = np.floor(used_size * (1 - val_rate)).astype(int)
     train_set, val_set = bipart_dataset(all_data, train_size)
     train_samp, val_samp = map(LenGroupedSampler,
-                               [lens_voc[:train_size], lens_voc[train_size:]])
+                               [lens_voc[:train_size], lens_voc[train_size:used_size]])
     train_loader = DataLoader(train_set, batch_size=batch_size, drop_last=True,
                               sampler=train_samp, collate_fn=collate_wrapper)
     val_loader = DataLoader(val_set, batch_size=batch_size, drop_last=True,
                             sampler=val_samp, collate_fn=collate_wrapper)
-    
+
     # synthesize ground truth wavs
     test_ids = torch.randint(int(train_size), used_size, (test_size, ))
     test_set = Subset(all_data, test_ids)
     test_loader = DataLoader(test_set, collate_fn=collate_wrapper)
     tb = SummaryWriter(log_dir=tb_dir)
     for _i in test_ids:
+        if args['no_voice']:
+            break
         tb.add_audio('wav{:05d}/ground_truth'.format(_i), synth_gt_wavs(_i),
                      sample_rate=sampling_rate,
                      global_step=0)
-        pass
 
     # load model
     char2voc = Char2Voc(n_type, encoded_size, 2 * encoded_size, upper_in=True,
@@ -234,7 +240,7 @@ if __name__ == '__main__':
         losses = []
         for d in tqdm(train_loader):
             char2voc.gen_init(batch_size)
-            y = char2voc(d.char, d.voc, upper_case=d.upper, 
+            y = char2voc(d.char, d.voc, upper_case=d.upper,
                          input_mask=d.in_mask, tf_rate=tf)
             loss = loss_criterion(y, d.voc)
             loss.backward()
@@ -258,6 +264,8 @@ if __name__ == '__main__':
         print('Dev Loss: %.3f' % (np.mean(dev_loss)))
 
         for _i, d in zip(test_ids.unbind(), test_loader):
+            if args['no_voice']:
+                break
             char2voc.gen_init(1)
             with torch.no_grad():
                 y = char2voc(d.char, d.voc, upper_case=d.upper,

@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(
     "       read wav files under 'wavdir' and output magphase vocoder features to 'vocdir'," +
     "if '--mode' is 'synth', " +
     "       synthesize wavs from the vocoder features in 'vocdir' and store in 'wavdir'"
-    )
+)
 parser.add_argument('-m', '--mode', dest='mode', nargs='?', default='extract',
                     help='one of the two: \"extract\" (for extracting vocoder features from raw wav files) \
                           or \"synth\" (for synthesizing from vocoder features)')
@@ -72,10 +72,10 @@ def read_binfile(filename, dim=60):
     fid.close()
     if np.mod(v_data.size, dim) != 0:
         raise ValueError('Dimension provided not compatible with file size.')
-    m_data = v_data.reshape((-1, dim)) #.astype('float64') # This is to keep compatibility with numpy default dtype.
-    return  m_data
+    m_data = v_data.reshape((-1, dim))  # .astype('float64') # This is to keep compatibility with numpy default dtype.
+    return m_data
 
-def wav2voc(wavdir, outdir, wav_name): #, save_space=False, **kwargs):
+def wav2voc(wavdir, outdir, wav_name):  # , save_space=False, **kwargs):
     mag_dim, phase_dim = size_feats[:2]
     mp.analysis_for_acoustic_modelling(path.join(wavdir, wav_name+'.wav'),
                                        outdir,

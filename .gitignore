@@ -9,6 +9,7 @@ __pycache__/
 .vscode
 .ipynb_checkpoints/
 data/
+data
 misc/test_getopt.sh
 *.wav
 *.ipynb

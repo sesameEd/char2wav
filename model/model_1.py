@@ -78,13 +78,17 @@ class Char2Voc(nn.modules.Module):
         self.decoder = nn.GRUCell(2 * encoded_size + gen_size, decoded_size)
         self.gen = nn.Linear(decoded_size, gen_size)
 
-    def forward(self, char_seq, y_tar, upper_case=None, tf_rate=0, input_mask=None):
+    def forward(self, char_seq, y_tar, upper_case=None, tf_rate=0, input_mask=None, voc_mask=None):
         """takes padded sequence as input"""
         shape_assert(char_seq, (self.B, -1))
         _B, _T = char_seq.shape
         shape_assert(y_tar, (-1, -1, self.G))
         if input_mask is None:
             input_mask = torch.ones(_B, _T).to(device)
+        if voc_mask is None:
+            voc_mask = torch.ones(_B, y_tar.shape[1], 1)
+        elif voc_mask.dim() == 2:
+            voc_mask.unsqueeze_(2)
         x_embd = self.embedding(char_seq) * input_mask.float().unsqueeze(-1)
         if upper_case is not None:
             shape_assert(upper_case, (_B, _T))
@@ -104,8 +108,9 @@ class Char2Voc(nn.modules.Module):
             hid = self.decoder(torch.cat([y_ss[np.random.binomial(1, tf_rate)],
                                           attn_val], dim=-1), hid)
             self.y_pre = self.gen(hid)
+            self.y_pre[:, -2] = torch.sigmoid(self.y_pre[:, -2])
             res.append(self.y_pre)
-        return torch.stack(res, dim=1)
+        return torch.stack(res, dim=1) * voc_mask
 
     def gen_init(self, batch_size):
         self.B = batch_size
