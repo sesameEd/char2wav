@@ -42,7 +42,7 @@ class MagPhaseLoss(nn.Module):
         loss_mp = self.loss_type(y_mp, tar_mp, reduction='none').sum(-1).sum(1).mean()
         loss_v = F.binary_cross_entropy(y_vuv, tar_vuv, reduction='none').sum(-1).sum(1).mean()
         loss_l = (self.loss_type(y_lf, tar_lf, reduction='none') * tar_vuv).sum(-1).sum(1).mean()
-        print(loss_mp.item(), loss_v.item(), loss_l.item())
+        # print(loss_mp.item(), loss_v.item(), loss_l.item())
         return loss_mp + loss_v + loss_l
 
 
