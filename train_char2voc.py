@@ -113,6 +113,7 @@ def synth_gt_wavs(i):
                                        'ground_truth_{:05d}.{}'.format(i, ft)))
     os.system('./voc_extract.py -m synth -o --no_batch' +
               ' -v {0} -w {1} -F ground_truth_{2:05d}'.format(voc_dir, wav_dir, i))
+    print(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))
     return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
 
 
@@ -180,7 +181,7 @@ if __name__ == '__main__':
     voc_cat, voc_uid, voc_mean, voc_std = itemgetter(
         'voc_scaled_cat', 'voc_utt_idx', 'voc_mean', 'voc_std')(voc_dic)
     lens_voc = voc_uid[1:] - voc_uid[:-1]
-    sampling_rate = voc_dic.get('sampling_rate', 48000)
+    sampling_rate = int(voc_dic.get('sampling_rate', 48000))
     voc_case = torch.split(voc_cat, torch.unbind(lens_voc), dim=0)
 
     # load character array data
@@ -230,8 +231,8 @@ if __name__ == '__main__':
         init_by_class[char2voc.__class__](char2voc)
     loss_criterion = MagPhaseLoss(batch_size=batch_size)
     optimizer = optim.Adam(char2voc.parameters(), lr=learning_rate)
-    tf = args['tf_rate']
 
+    tf = args['tf_rate']
     id_loss = 0
     for _e in range(1, epochs + 1):
         if args['scheduled_sampling']:
