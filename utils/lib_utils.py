@@ -35,13 +35,14 @@ class MagPhaseLoss(nn.Module):
         shape_assert(y, (self.B, -1, self.V))
         _B, _T, _V = y.shape
         shape_assert(target, (_B, _T, _V))
-        # if loss_mask is None:
-        #     loss_mask = torch.ones(target.shape)
         y_mp, y_vuv, y_lf = y.split((80, 1, 1), dim=-1)
         tar_mp, tar_vuv, tar_lf = target.split((80, 1, 1), dim=-1)
+        # if loss_mask is None:
+        #     loss_mask = torch.ones(target.shape)
         loss_mp = self.loss_type(y_mp, tar_mp, reduction='none').sum(-1).sum(1).mean()
-        loss_v = (- tar_vuv * y_vuv.log()).sum(-1).sum(1).mean()
+        loss_v = F.binary_cross_entropy(y_vuv, tar_vuv, reduction='none').sum(-1).sum(1).mean()
         loss_l = (self.loss_type(y_lf, tar_lf, reduction='none') * tar_vuv).sum(-1).sum(1).mean()
+        print(loss_mp.item(), loss_v.item(), loss_l.item())
         return loss_mp + loss_v + loss_l
 
 

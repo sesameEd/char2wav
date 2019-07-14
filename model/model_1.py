@@ -53,7 +53,7 @@ class Attention(nn.modules.Module):
                                ).unsqueeze(dim=-1)
         # shape_assert(rho, (query.shape[0], self.K, 1))
         phi = (rho * torch.exp(
-               -beta * (self.kappa - torch.arange(float(self.T)).view(1, 1, self.T)) ** 2)
+               -beta * (self.kappa - var(torch.arange(float(self.T))).view(1, 1, self.T)) ** 2)
                ).sum(dim=1)
         return F.softmax(phi, dim=1) * input_mask.float()
 
@@ -72,7 +72,7 @@ class Char2Voc(nn.modules.Module):
         self.upper_in = kwargs.get('upper_in', False)
         num_embd = self.E-1 if self.upper_in else self.E
         self.embedding = nn.Embedding(num_types+1, num_embd, padding_idx=0)
-        self.y0 = nn.Parameter(torch.rand(1, self.G), requires_grad=True)
+        self.y0 = nn.Parameter(var(torch.zeros(self.G)), requires_grad=True)
         self.encoder = nn.GRU(self.E, encoded_size, bidirectional=True, batch_first=True)
         self.attention = Attention(2 * encoded_size + decoded_size, self.K)
         self.decoder = nn.GRUCell(2 * encoded_size + gen_size, decoded_size)
@@ -84,9 +84,9 @@ class Char2Voc(nn.modules.Module):
         _B, _T = char_seq.shape
         shape_assert(y_tar, (-1, -1, self.G))
         if input_mask is None:
-            input_mask = torch.ones(_B, _T).to(device)
+            input_mask = var(torch.ones(_B, _T))
         if voc_mask is None:
-            voc_mask = torch.ones(_B, y_tar.shape[1], 1)
+            voc_mask = var(torch.ones(_B, y_tar.shape[1], 1))
         elif voc_mask.dim() == 2:
             voc_mask.unsqueeze_(2)
         x_embd = self.embedding(char_seq) * input_mask.float().unsqueeze(-1)
@@ -108,14 +108,13 @@ class Char2Voc(nn.modules.Module):
             hid = self.decoder(torch.cat([y_ss[np.random.binomial(1, tf_rate)],
                                           attn_val], dim=-1), hid)
             self.y_pre = self.gen(hid)
-            self.y_pre[:, -2] = torch.sigmoid(self.y_pre[:, -2])
+            torch.sigmoid_(self.y_pre[:, -2])
             res.append(self.y_pre)
-        return torch.stack(res, dim=1) * voc_mask
+        return torch.stack(res, dim=1) * voc_mask.float()
 
     def gen_init(self, batch_size):
         self.B = batch_size
         self.y_pre = var(self.y0.expand(batch_size, -1))
-        # self.y_pre = var(torch.zeros(batch_size, self.G))
 
 def init_Linear(net):
     init.zeros_(net.bias)
@@ -141,10 +140,6 @@ def init_GRU(net):
             init_recurrent(p, 3, init.xavier_uniform_)
         if 'weight_hh' in n:
             init_recurrent(p, 3, init.orthogonal_)
-    # init_recurrent(net.weight_ih, num_chunks=3,
-    #                initializer=init.xavier_uniform_)
-    # init_recurrent(net.weight_hh, num_chunks=3,
-    #                initializer=init.orthogonal_)
 
 def init_LSTM(lstm):
     for n, p in lstm.named_parameters():
@@ -156,8 +151,10 @@ def init_LSTM(lstm):
             init_recurrent(p, 4, init.orthogonal_)
 
 def init_Char2Voc(net):
-    net.y0[:60].normal_(mean=-1.2, std=.5)
     init_Module(net)
+    init.normal_(net.y0[:60], mean=-1.2, std=.5)
+    init.normal_(net.y0[60:])
+    init.uniform_(net.y0[-2])
 
 
 global init_by_class
