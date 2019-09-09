@@ -69,7 +69,7 @@ if [ "$GET_MAGPHASE" = true ]; then
   echo ===============================compiling magphase=============================
   git submodule update --init magphase
   # pip2 install --user numpy scipy soundfile  # matplotlib
-  # pip3 install --user h5py soundfile 
+  # pip3 install --user h5py soundfile future tb-nightly
   cd magphase/tools
   ./download_and_compile_tools.sh
   cd ../../
