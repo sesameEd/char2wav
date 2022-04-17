@@ -3,7 +3,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import Dataset
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 def var(tensor):
     return tensor.to(device)
@@ -23,15 +25,33 @@ def write_binfile(m_data, filename):
     fid.close()
     return
 
+
 def sum_loss(loss3d):
     return loss3d.sum(-1).sum(1).mean()
 
 
 def get_mask_from_lengths(lengths):
     max_len = torch.max(lengths).item()
-    ids = torch.arange(max_len).unsqueeze(1)
+    ids = torch.arange(max_len)  # .unsqueeze(0)
     mask = (ids < lengths.unsqueeze(1)).byte()
     return mask
+
+
+class VariLenDataset(Dataset):
+    """takes lists of tensors of variable lengths as
+    Each sample will be retrieved by indexing lists.
+    list(char_seq), list(voc_seq), tensor( )(, list(upper_case))
+    """
+    def __init__(self, *ls_cases):
+        assert all(len(ls_cases[0]) == len(case) for case in ls_cases), \
+            "Expected lists with same #training cases, got {}".format(list(map(len, ls_cases)))
+        self.ls_cases = ls_cases
+
+    def __getitem__(self, index):
+        return tuple(case[index] for case in self.ls_cases)
+
+    def __len__(self):
+        return len(self.ls_cases[0])
 
 
 class LinearNorm(torch.nn.Module):
@@ -96,6 +116,7 @@ class MagPhaseLoss(nn.Module):
         loss_l = self.loss_type(y_lf, tar_lf, reduction='none') * tar_vuv * loss_mask
         loss_mp, loss_v, loss_l = map(sum_loss, (loss_mp, loss_v, loss_l))
         return loss_mp + loss_v + loss_l
+
 
 class Tacotron2Loss(nn.Module):
     def __init__(self):

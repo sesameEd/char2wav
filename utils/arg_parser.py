@@ -27,7 +27,7 @@
 
 import argparse
 
-from tacotron2.text import symbols
+# from tacotron2.text import symbols
 
 
 def parse_tacotron2_args(parent, add_help=False):
@@ -37,16 +37,16 @@ def parse_tacotron2_args(parent, add_help=False):
     parser = argparse.ArgumentParser(parents=[parent], add_help=add_help)
 
     # misc parameters
-    parser.add_argument('--mask-padding', default=False, type=bool,
-                        help='Use mask padding')
+    parser.add_argument('--mask-padding', default=True,
+                        action='store_false', help='Use mask padding')
     parser.add_argument('--n-mel-channels', default=81, type=int,
-                        help='Number of bins in mel-spectrograms')
+                        help='MagPhase dimension')  # bins in mel-spectrograms'
 
     # symbols parameters
-    global symbols
-    len_symbols = len(symbols)
+    # global symbols
+    # len_symbols = len(symbols)
     symbols = parser.add_argument_group('symbols parameters')
-    symbols.add_argument('--n-symbols', default=len_symbols, type=int,
+    symbols.add_argument('--n-symbols', default=41, type=int,
                          help='Number of symbols in dictionary')
     symbols.add_argument('--symbols-embedding-dim', default=512, type=int,
                          help='Input embedding dimension')
@@ -64,7 +64,7 @@ def parse_tacotron2_args(parent, add_help=False):
     decoder = parser.add_argument_group('decoder parameters')
     decoder.add_argument('--n-frames-per-step', default=1,
                          type=int,
-                         help='Number of frames processed per step') # currently only 1 is supported
+                         help='Number of frames processed per step')  # currently only 1 is supported
     decoder.add_argument('--decoder-rnn-dim', default=1024, type=int,
                          help='Number of units in decoder LSTM')
     decoder.add_argument('--prenet-dim', default=256, type=int,

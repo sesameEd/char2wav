@@ -8,8 +8,10 @@ import torch.nn.functional as F
 from utils import shape_assert, var, ConvNorm, LinearNorm
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 def print_torchtsr(a):
     return 'ndarray(shape={}, dtype={})'.format(a.shape, a.dtype)
+
 
 class LayerNormGRUCell(nn.GRUCell):
     def __init__(self, input_size, hidden_size, bias=True):
@@ -33,6 +35,7 @@ class LayerNormGRUCell(nn.GRUCell):
         cand = (self.ln_hc_ih(wXx[2]) + _r * self.ln_hc_hh(wXh[2])).tanh()
         hy = (1 - _z) * hx + _z * cand
         return hy
+
 
 class Encoder(nn.Module):
     """Encoder module:
@@ -128,7 +131,7 @@ class Attention(nn.Module):
                  attention_location_kernel_size=31):
         super(Attention, self).__init__()
         self.prev_dec_layer = LinearNorm(prev_dec_dim, attention_dim,
-                                      bias=False, w_init_gain='tanh')
+                                         bias=False, w_init_gain='tanh')
         self.memory_layer = LinearNorm(embedding_dim, attention_dim, bias=False,
                                        w_init_gain='tanh')
         self.v = LinearNorm(attention_dim, 1, bias=False)
@@ -161,7 +164,7 @@ class Attention(nn.Module):
 
     def forward(self, prev_decoded, processed_memory,
                 attention_weights_cat, input_mask=None):
-                # memory, 
+        # memory,
         """
         PARAMS
         ------
@@ -183,12 +186,12 @@ class Attention(nn.Module):
         # memory: encoder outputs
         # attention_context = torch.bmm(attention_weights.unsqueeze(1), memory)
         # attention_context = attention_context.squeeze(1)
-        return attention_weights # , attention_context
+        return attention_weights  # , attention_context
 
 
 class Char2Voc(nn.modules.Module):
     def __init__(self, num_types, embedding_size, decoded_size,
-                 *, gen_size=82, do_maskedLM=False, **kwargs): # encoded_size, 
+                 *, gen_size=82, do_maskedLM=False, **kwargs):  # encoded_size,
         super(Char2Voc, self).__init__()
         self.do_maskedLM = do_maskedLM
         self.E = embedding_size
@@ -227,7 +230,7 @@ class Char2Voc(nn.modules.Module):
         p_encoded = self.attention.memory_layer(encoded)
         res = [var(self.y0.expand(_B, -1))]
         attn_val = encoded[:, 0, :]
-        attn_key = [torch.zeros(_B, _T).scatter_(1, torch.zeros(_B, _T).long(), 1.).to(device)]
+        attn_key = [var(torch.zeros(_B, _T).scatter_(1, torch.zeros(_B, 1).long(), 1.))]
         cum_attn = attn_key[-1].unsqueeze(1)
         hid = self.decoder(torch.cat([res[-1], attn_val], dim=-1))
         # self.attention.kappa_init(_B, _T)
@@ -263,17 +266,11 @@ def init_Linear(net):
     init.zeros_(net.bias)
     init.xavier_normal_(net.weight)
 
+
 def init_recurrent(weight, num_chunks, initializer):
     for _w in weight.chunk(num_chunks, 0):
         initializer(_w)
 
-# def init_ModuleList(m_list):
-#     for layer in m_list:
-#         init_by_class.get(layer.__class__, init_Module)(layer)
-
-# def init_Module(net):
-#     for layer in net.children():
-#         init_by_class.get(layer.__class__, init_Module)(layer)
 
 def init_GRU(net):
     for n, p in net.named_parameters():
@@ -284,6 +281,7 @@ def init_GRU(net):
         if 'weight_hh' in n:
             init_recurrent(p, 3, init.orthogonal_)
 
+
 def init_LSTM(lstm):
     for n, p in lstm.named_parameters():
         if 'bias' in n:
@@ -293,34 +291,20 @@ def init_LSTM(lstm):
         if 'weight_hh' in n:
             init_recurrent(p, 4, init.orthogonal_)
 
-# def init_Char2Voc(net):
-#     init_Module(net)
-#     init.normal_(net.y0[:60], mean=-1.2, std=.5)
-#     init.normal_(net.y0[60:])
-#     init.uniform_(net.y0[-2])
-
-
-# global init_by_class
-# init_by_class = {
-#     nn.Linear : init_Linear,
-#     nn.ModuleList : init_ModuleList,
-#     nn.GRUCell : init_GRU,
-#     nn.GRU : init_GRU,
-#     Char2Voc : init_Char2Voc}
 
 if __name__ == "__main__":
     test_char2v = True
 
     if test_char2v:
-        c2v = Char2Voc(num_types=40, embedding_size=256, decoded_size=512, 
-                       dropout=.5).to(device)
+        c2v = var(Char2Voc(num_types=40, embedding_size=256, decoded_size=512,
+                           dropout=.5))
         c2v.weight_init()
         print("running test Char2Voc model...")
         x_ls = [torch.from_numpy(np.random.randint(1, 41, size=_i))
                 for _i in np.random.randint(10, size=10) if _i >= 2]
         rand_voc = torch.rand((len(x_ls), 8, 82))
         x_in, lens_seq = R.pad_packed_sequence(
-            R.pack_sequence(x_ls, enforce_sorted=False), 
+            R.pack_sequence(x_ls, enforce_sorted=False),
             batch_first=True)
         print(x_in.shape, lens_seq)
         x_places = torch.arange(x_in.shape[1]).unsqueeze(0)

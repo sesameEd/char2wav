@@ -105,13 +105,13 @@ def get_mean_std(tensor_2d, ax=0):
 def concat_zip(ls, ax=0):
     return [np.concatenate(tp, axis=ax) for tp in zip(*ls)]
 
-def mask_scale_mpl(voc_arr, lf0_dim=-1, critr=np.exp):
+def mask_scale_mpl(voc_arr, lf0_dim=-1):
     if lf0_dim == -1 or lf0_dim == voc_arr.shape[1] - 1:
         _mp, _lf = np.split(voc_arr, [lf0_dim], axis=1)
     else:
         _lf = voc_arr[:, lf0_dim]
         _mp = np.delete(voc_arr, lf0_dim, 1)
-    vuv = critr(_lf) > 0
+    vuv = np.exp(_lf) > 0
     mp_ms, lf_ms = [get_mean_std(_v) for _v in (_mp, _lf[vuv].reshape(-1, 1))]
     _m, _s = concat_zip([mp_ms, lf_ms], ax=0)
     return _m, _s, vuv, (voc_arr - _m) / _s
@@ -142,22 +142,22 @@ if __name__ == '__main__':
             if args['save_space']:
                 os.remove(os.path.join(outdir, tkn+'.hdf5'))
         all_voc = np.concatenate(all_mps, axis=0)
-        sent_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
-        assert all_voc.shape[0] == sent_idx[-1]
+        utt_idx = np.insert(np.cumsum([len(vec) for vec in all_mps]), 0, 0)
+        assert all_voc.shape[0] == utt_idx[-1]
         if args['overwrite'] or (not glob(os.path.join(outdir, '..', 'all_vocoder.hdf5'))):
             with h5py.File(os.path.join(outdir, '..', 'all_vocoder.hdf5'), 'w') as f:
-                f['voc_utt_idx'] = sent_idx
+                f['voc_utt_idx'] = utt_idx
                 f['voc_mean'], f['voc_std'], voiced, all_scaled = mask_scale_mpl(all_voc)
                 f['voc_scaled_cat'] = np.insert(all_scaled, -1, voiced.flatten(), axis=1)
                 f['sampling_rate'] = sample_rate
                 f['bit_depth'] = bit_depth
-                print(sent_idx[-1], f['voc_scaled_cat'].shape,
+                print(utt_idx[-1], f['voc_scaled_cat'].shape,
                       f['voc_mean'][-1], f['voc_std'][-1])
         else:
             with h5py.File(os.path.join(outdir, '..', 'all_vocoder.hdf5'), 'a') as f:
                 voc_dic = {k: np.array(f.pop(k)) for k in f.keys()}
                 b4_uid, ending_id = np.split(voc_dic['voc_utt_idx'], [-1])
-                f['voc_utt_idx'] = np.concatenate([b4_uid, sent_idx + ending_id])
+                f['voc_utt_idx'] = np.concatenate([b4_uid, utt_idx + ending_id])
                 b4_unscaled = np.delete(voc_dic['voc_scaled_cat'], -2, axis=1) \
                               * voc_dic['voc_std'] + voc_dic['voc_mean']
                 all_unscaled = np.concatenate([b4_unscaled, all_voc])

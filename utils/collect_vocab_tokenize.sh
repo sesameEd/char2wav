@@ -6,8 +6,8 @@ if [[ ${PIPESTATUS[0]} -ne 4 ]]; then
     exit 1
 fi
 
-OPTIONS=i:o:tm:
-LONGOPTS=indir:,outdir:,bytitle,mode:
+OPTIONS=i:o:tm:l
+LONGOPTS=indir:,outdir:,bytitle,mode:,ljspeech
 ! PARSED=$(getopt --options=$OPTIONS --longoptions=$LONGOPTS --name "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -20,6 +20,7 @@ GETVOCAB=true
 TKNZ=true
 BYTITLE=false
 SUFFIX=_[0-9]{3}_[0-9]{3}.txt
+LJSPEECH=false
 display_help() {
     echo "Usage: $0 [-h --help] [-i --indir <input/transcript>] [-o --output <output_wav_dir>]
           [-m --mode getvocab|tokenize|all] [-t --bytitle]" >&2
@@ -31,6 +32,7 @@ display_help() {
     echo "                       'AMidsummerNightsDream' <- 'AMidsummerNightsDream_000_000.txt'"
     echo "                       You have to replace the \$SUFFIX with a regex that matches"
     echo "                       your own naming standard and works for linux sed command"
+    echo "     -l, --ljspeech    processing LJ speech dataset. "
 }
 
 while true; do
@@ -70,6 +72,11 @@ while true; do
         display_help
         exit 0
         ;;
+      -l|--ljspeech)
+        DATADIR=data
+        LJSPEECH=true
+        shift
+        ;;
       --)
         shift
         break
@@ -89,11 +96,17 @@ if [ ! -d "$outdir" ]; then
   mkdir $outdir
 fi
 
+set -x
 if [ "$GETVOCAB" = true ]; then
-  if [ "$BYTITLE" = true ]; then
+  if [ "$LJSPEECH" = true ]; then
+    echo "===================:normalizing from csv file:===================="
+    cat "$DATADIR/metadata.csv" | sed "s%^\([^|]*\)|[^|]*|\([^|]*\)$%\2%g" \
+      >| ${outdir}/all.txt
+  elif [ "$BYTITLE" = true ]; then
     echo "===================:creating character vocab and title count:===================="
     echo -n "" >| ${outdir}/all.txt
-    find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | uniq -c >| ${outdir}/title.freq
+    find ${transdir} -type f -printf "%f\n" | sort | sed -r "s/${SUFFIX}//" | \
+      uniq -c >| ${outdir}/title.freq
     if [ $? -eq 0 ]; then
       echo "Succesfully counted utterances under each title and stored in tab-separated file ${outdir}/title.freq"
     fi
@@ -112,12 +125,13 @@ if [ "$GETVOCAB" = true ]; then
       echo `cat $f` >> ${outdir}/all.txt
     done
   fi
+
   if [ $? -eq 0 ]; then
     echo "All transcripts are collected in order and stored in file ${outdir}/all.txt"
   fi
   grep --color='auto' -P -n "[^\x00-\x7F]" ${outdir}/all.txt
-  sed -e "s/‘/'/g" -e 's/—/--/g' -e "s|–|--|g" -i ${outdir}/all.txt # replaces non-ascii characters
-  sed -z 's/\([a-z]\)\n\([A-Z]\)/\1.\n\2/g' -i ${outdir}/all.txt  # adds a period to lines without punctuation but with next line first char capitalized
+  sed -e $"y/“”‘’/\"\"''/" -e 's/—/--/g' -e "s|–|--|g" -i ${outdir}/all.txt # replaces non-ascii characters
+  # sed -z 's/\([a-z]\)\n\([A-Z]\)/\1.\n\2/g' -i ${outdir}/all.txt  # adds a period to lines without punctuation but with next line first char capitalized
   # awk '{print length}' ${outdir}/all.txt | sort -g | uniq -c | tail -10  # gets the lengths of longest lines and their frequencies
   echo "getting a table of character types and their occurrences"
   od -cvAn -w1 ${outdir}/all.txt | sort | uniq -c >| $outdir/vocab.freq
@@ -127,13 +141,17 @@ if [ "$GETVOCAB" = true ]; then
   fi
 fi
 
+
+
+
 if [ "$TKNZ" = true ]; then
   echo "=============================:tokenizing transcripts:==========================="
   java -cp $CORENLP_HOME/stanford-corenlp-3.9.1.jar edu.stanford.nlp.process.DocumentPreprocessor \
     ${outdir}/all.txt >| ${outdir}/tknzd_all.txt
   echo ""
   sed -e s/\`\`/\"/g -e s/\'\'/\"/g -e s/\`/\'/g \
-    -e 's/-LRB-/\(/g' -e 's/-RRB-/\)/g' -i ${outdir}/tknzd_all.txt
+    -e 's/-LRB-/\(/g' -e 's/-RRB-/\)/g' -e 's/-LSB-/\[/g' -e 's/-RSB-/\]/g' \
+    -i ${outdir}/tknzd_all.txt
   # replaces LaTeX format quotations and brackets
   sed  -ze 's/\.\.\.\ "\ /...\ "\n/g' -ze 's/\.\.\.\ \([^"]\)/...\n\1/g' -i ${outdir}/tknzd_all.txt
   # adds a sentence end to elipsis that are end of words

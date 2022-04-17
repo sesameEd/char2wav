@@ -10,7 +10,7 @@ from torch.utils.data import Sampler, Subset, DataLoader, Dataset
 import torch.nn as nn
 import torch.nn.utils.rnn as R
 from torch.utils.tensorboard import SummaryWriter
-from utils import write_binfile, MagPhaseLoss, var, get_mask_from_lengths
+from utils import write_binfile, MagPhaseLoss, var, get_mask_from_lengths, VariLenDataset
 from model import Char2Voc  # , var, init_by_class
 from operator import itemgetter
 import os
@@ -49,10 +49,10 @@ if not glob(voc_dir):
 batch_size = args['batch_size']
 epochs = args['epochs']
 learning_rate = args['learning_rate']
-val_rate = .05
+val_rate = .02
 test_size = args['test_size']
 embedding_size = args['hid_size']
-model_name = 'char2voc_em{en}_b{bt}{init}{ss}_d{dp}_tf{tf}_L{lr}_mse'.format(
+model_name = 'char2voc_em{en}_b{bt}{init}{ss}_d{dp}_tf{tf}_L{lr}'.format(
     init=args['init'] * '_init',
     ss=args['scheduled_sampling'] * '_ss',
     tf=args['tf_rate'],
@@ -65,9 +65,11 @@ tb_dir = os.path.join('data/tensorboard', model_name)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 def bipart_dataset(complete_set, split_index):
     return (Subset(complete_set, range(split_index)),
             Subset(complete_set, range(split_index, len(complete_set))))
+
 
 def synth_scaled(out_vocoder, i):
     out_voiced = torch.bernoulli(out_vocoder[:, -2])
@@ -82,42 +84,31 @@ def synth_scaled(out_vocoder, i):
                                         # 'char2v_{:05d}.{}'.format(i, ft)))
     if glob(wav_file):
         os.remove(wav_file)
-    subprocess.check_output('./voc_extract.py -m synth -o --no_batch -F ' + wav_tkn +
-                            ' -v {0} -w {1}'.format(voc_dir, wav_dir), shell=True)
+    cmd_line = ' '.join(['./voc_extract.py', '-m', 'synth', '-o', '--no_batch',
+                         '-F', wav_tkn, '-v', voc_dir, '-w', wav_dir,
+                         '-r', str(sampling_rate)])
+    subprocess.check_output(cmd_line, shell=True)
     return sf.read(wav_file)[0]
 
 
 def synth_gt_wavs(i):
-    gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
-    gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
-    assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
+    wav_tkn = 'ground_truth_{:05d}'.format(i)
+    if not glob(os.path.join(wav_dir, wav_tkn + '.wav')):
+        gt_vocoder = voc_cat[voc_uid[i]:voc_uid[i+1]]
+        gt_magphase = gt_vocoder[:, list(range(80))+[81]] * voc_std + voc_mean
+        assert ((gt_vocoder[:, -2] == 0) + (gt_vocoder[:, -2] == 1)).all(), \
             'wrong dimension for voicedness '
-    gt_magphase[:, -1][(1 - gt_vocoder[:, -2]).byte()] = -1.0e+10
-    gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
-    for gt, ft in zip(gt_split, ['mag', 'real', 'imag', 'lf0']):
-        write_binfile(gt, os.path.join(voc_dir,
-                                       'ground_truth_{:05d}.{}'.format(i, ft)))
-    subprocess.check_output('./voc_extract.py -m synth -o --no_batch' +
-              ' -v {0} -w {1} -F ground_truth_{2:05d}'.format(voc_dir, wav_dir, i), shell=True)
-    # print(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))
-    return sf.read(os.path.join(wav_dir, 'ground_truth_{0:05d}.wav'.format(i)))[0]
+        gt_magphase[:, -1][(1 - gt_vocoder[:, -2]).byte()] = -1.0e+10
+        gt_split = torch.split(gt_magphase, [60, 10, 10, 1], dim=1)
+        for gt, ft in zip(gt_split, ['mag', 'real', 'imag', 'lf0']):
+            write_binfile(gt, os.path.join(voc_dir, '.'.join([wav_tkn, ft])))
+        cmd_line = ' '.join(['./voc_extract.py', '-m', 'synth',
+                             '-F', wav_tkn, '-v', voc_dir, '-w', wav_dir,
+                             '-r', str(sampling_rate), '--no_batch'])
+        subprocess.check_output(cmd_line, shell=True)
+    # print(os.path.join(wav_dir, wav_tkn + '.wav'))
+    return sf.read(os.path.join(wav_dir, wav_tkn + '.wav'))[0]
 
-
-class VariLenDataset(Dataset):
-    """takes lists of tensors of variable lengths as
-    Each sample will be retrieved by indexing lists.
-    list(char_seq), list(voc_seq), tensor( )(, list(upper_case))
-    """
-    def __init__(self, *ls_cases):
-        assert all(len(ls_cases[0]) == len(case) for case in ls_cases), \
-            "Expected lists with same #training cases, got {}".format(list(map(len, ls_cases)))
-        self.ls_cases = ls_cases
-
-    def __getitem__(self, index):
-        return tuple(case[index] for case in self.ls_cases)
-
-    def __len__(self):
-        return len(self.ls_cases[0])
 
 class LenGroupedSampler(Sampler):
     def __init__(self, lens):
@@ -129,6 +120,7 @@ class LenGroupedSampler(Sampler):
 
     def __len__(self):
         return self.sorted_ids.shape[0]
+
 
 class PaddedBatch:
     def __init__(self, data):
@@ -157,6 +149,7 @@ class PaddedBatch:
             self.upper = self.upper.pin_memory()
         return self
 
+
 def collate_wrapper(batch):
     return PaddedBatch(batch)
 
@@ -171,6 +164,7 @@ if __name__ == '__main__':
     lens_voc = voc_uid[1:] - voc_uid[:-1]
     sampling_rate = int(voc_dic.get('sampling_rate', 48000))
     voc_case = torch.split(voc_cat, torch.unbind(lens_voc), dim=0)
+    print("vocoder sequence loaded")
 
     # load character array data
     with h5py.File(char_path, 'r') as f:
@@ -178,6 +172,7 @@ if __name__ == '__main__':
         char_ls = itemgetter('bow_id', 'eow_id', 'cat_encoded_seq',
                              'cat_is_upper', 'utt_id')(char_dic)
     n_type = char_dic['char_types'].shape[0]
+    print('# types of symbols used: ', n_type)
     bow_id, eow_id, cat_char_seq, cat_upper_seq, utt_id = \
         [var(torch.from_numpy(_t.astype(int))) for _t in char_ls]
     assert all(cat_char_seq != 0), np.where(cat_char_seq == 0)
@@ -188,6 +183,7 @@ if __name__ == '__main__':
     all_data = VariLenDataset(char_case[:used_size], voc_case[:used_size],
                               lens_seq[:used_size], lens_voc[:used_size],
                               up_case[:used_size])
+    print('data loader ready')
 
     # split train, val set; and group batches by lengths
     train_size = np.floor(used_size * (1 - val_rate)).astype(int)
@@ -198,9 +194,11 @@ if __name__ == '__main__':
                               sampler=train_samp, collate_fn=collate_wrapper)
     val_loader = DataLoader(val_set, batch_size=batch_size,
                             sampler=val_samp, collate_fn=collate_wrapper)
+    print('data loaded. ')
 
     # synthesize ground truth wavs
-    test_ids = torch.randint(int(train_size), used_size, (test_size, ))
+    test_ids = torch.arange(int(train_size), int(train_size) + test_size)
+    # torch.randint(int(train_size), used_size, (test_size, ))
     test_set = Subset(all_data, test_ids)
     test_loader = DataLoader(test_set, collate_fn=collate_wrapper)
     tb = SummaryWriter(log_dir=tb_dir)
@@ -217,11 +215,11 @@ if __name__ == '__main__':
     # print("constant shift in attention set to: ", const_shift)
     # char2voc.attention.const_shift = const_shift
     pytorch_total_params = sum(p.numel() for p in char2voc.parameters())
-    print('total number of parameters (including non-trainbale): ', 
+    print('total number of parameters (including non-trainbale): ',
           pytorch_total_params)
     if args['init']:
         char2voc.weight_init()
-    loss_criterion = MagPhaseLoss(loss_type=nn.MSELoss)
+    loss_criterion = MagPhaseLoss()  # (loss_type=nn.functional.mse_loss)
     optimizer = optim.Adam(char2voc.parameters(), lr=learning_rate)
 
     tf = args['tf_rate']

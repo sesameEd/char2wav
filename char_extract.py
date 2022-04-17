@@ -103,7 +103,8 @@ if __name__ == "__main__":
     bos_id = np.delete(bos_id, -1, 0)
     bow_id, eow_id = get_bow_eow(all_sents)
     assert eos_id[-1] == eow_id[-1], 'did not get the right sentence or word boundaries'
-    assert eos_id[-1] + 1 == utt_id[-1], 'index of last character does not accord'
+    assert eos_id[-1] + 1 == utt_id[-1], ('index of last character does not accord',
+                                          eos_id[-1] + 1, utt_id[-1])
     assert all(np.in1d(utt_id[:-1], bow_id, assume_unique=True)), \
         'utts no. {} didn\'t start with word boundary.'.format(
             np.where(np.in1d(utt_id[:-1], bow_id))[0])
@@ -115,7 +116,10 @@ if __name__ == "__main__":
     # get an invertible mapping between individual characters (including boundaries) and numeric indices
     with open(vocab_file, 'r') as f:
         chars = [re.sub(r'^\d+\t', '', kv).rstrip().lower() for kv in f]
-    chars.remove('')
+    try:
+        chars.remove('')
+    except ValueError:
+        pass
     idx2char = dict(enumerate(sorted(boundary_signs.values()) + sorted(set(chars)), 1))
     print(idx2char)
     char2idx = reverse_dic(idx2char)
@@ -126,9 +130,9 @@ if __name__ == "__main__":
             title_utts = np.array([re.sub(r'\t\w+$', '', kv) for kv in f]).astype(int)
         title_utts = np.insert(np.cumsum(title_utts), 0, 0)
         assert title_utts[-1] + 1 == len(utt_id)
+        title_id = utt_id[title_utts]
     else:
         title_file = None
-    title_id = utt_id[title_utts]
 
     sents_with_bnd = [BOS + BOW + (EOW + BOW).join(sent.split(' ')) + EOW + EOS for sent in all_sents]
     sent_id = get_begin_ids(sents_with_bnd)
