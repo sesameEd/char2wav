@@ -1,6 +1,6 @@
 # char2wav
 This repo is a realization of an end-to-end text-to-speech system based largely on `char2wav` from ([Sotelo et al, 2017](https://openreview.net/pdf?id=B1VWyySKx), including model scripts, training scripts, and other scripts for building dependencies and for processing the data. \
-The model is a bi-directional attention-based recurrent sequence generator (bi-ARSG) that takes texts of utterances (in the form of character strings) as input and predict a sequence of vocoder outputs, which are then translated into waveform. The vocoder features used here are [melgan-neurips](https://github.com/descriptinc/melgan-neurips/tree/6488045bfba1975602288de07a58570c7b4d66ea). The neural network is written with [PyTorch](https://pytorch.org/) framework. \
+The model is a bi-directional attention-based recurrent sequence generator (bi-ARSG) that takes texts of utterances (in the form of character strings) as input and predict a sequence of vocoder outputs, which are then translated into waveform. The vocoder features used here are [melgan-neurips](https://github.com/descriptinc/melgan-neurips/tree/6488045bfba1975602288de07a58570c7b4d66ea). The neural network is written with [PyTorch](https://pytorch.org/) framework. 
 
 ## Dependency
 To download and compile all tools (except for PyTorch) run
